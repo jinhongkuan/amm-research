@@ -1,0 +1,20 @@
+{
+  "name": "amm-research",
+  "version": "1.0.0",
+  "main": "src/fetch.ts",
+  "repository": "https://github.com/jinhongkuan/amm-research.git",
+  "author": "Jin Hong Kuan <kuanjh123@gmail.com>",
+  "license": "MIT",
+  "scripts": {
+    "fetch": "ts-node src/fetch.ts"
+  },
+  "dependencies": {
+    "@types/node": "^20.4.4",
+    "graphql": "^16.7.1",
+    "typescript": "^5.1.6"
+  },
+  "devDependencies": {
+    "@graphprotocol/client-cli": "^3.0.0",
+    "ts-node": "^10.9.1"
+  }
+}
