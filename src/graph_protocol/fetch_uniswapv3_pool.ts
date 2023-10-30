@@ -1,5 +1,6 @@
-import { execute } from "../.graphclient";
+import { execute } from "../../.graphclient";
 import fs from "fs";
+import { program } from "commander"; 
 
 export const fetchPoolHistoricalData = async (
   token0: string,
@@ -64,14 +65,32 @@ export const fetchPoolHistoricalData = async (
   return jsonData;
 };
 
-const [token0, token1, startDate, endDate, outFile] = process.argv.slice(2);
+program
+  .description('Fetch historical data for a Uniswap V3 pool')
+  .argument('<token0>', 'The address of the first token in the pool')
+  .argument('<token1>', 'The address of the second token in the pool')
+  .argument('<start-date>', 'The start date for the data fetch in YYYY-MM-DD format')
+  .argument('<end-date>', 'The end date for the data fetch in YYYY-MM-DD format')
+  .option('-o, --out-file <type>', 'Name of the output file where the fetched data will be stored')
+  .action((token0: string, token1: string, startDate: string, endDate: string, options: any) => {
+    const outFile =  `queries/graph_protocol/uniswapv3_pool_fees/${options.outFile ?? "uniswapv3_pool"}.json`;
 
-(async () => {
-  const jsonData = await fetchPoolHistoricalData(
-    token0,
-    token1,
-    Date.parse(startDate) / 1000,
-    Date.parse(endDate) / 1000
-  );
-  fs.writeFileSync(`output/${outFile}.json`, jsonData);
-})();
+    if (!token0 || !token1 || !startDate || !endDate) {
+      program.help();
+    }
+
+    (async () => {
+      const jsonData = await fetchPoolHistoricalData(
+        token0.toLowerCase(),
+        token1.toLowerCase(),
+        Date.parse(startDate) / 1000,
+        Date.parse(endDate) / 1000
+      );
+      fs.writeFileSync(outFile, jsonData);
+    })();
+
+    
+  })
+  .showHelpAfterError()
+  .parse(process.argv);
+
