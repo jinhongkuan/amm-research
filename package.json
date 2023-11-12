@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@types/node": "^20.4.4",
+    "alchemy-sdk": "^2.11.0",
     "commander": "^11.1.0",
     "graphql": "^16.7.1",
     "typescript": "^5.1.6"
