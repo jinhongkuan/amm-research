@@ -1,0 +1,107 @@
+[
+  {
+    "name": "USD Coin",
+    "symbol": "USDC",
+    "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "decimals": 6,
+    "chainId": 1
+  },
+  {
+    "name": "Wrapped Ether",
+    "symbol": "WETH",
+    "address": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+    "decimals": 18,
+    "chainId": 1
+  },
+  {
+    "name": "Tether",
+    "symbol": "USDT",
+    "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "decimals": 6,
+    "chainId": 1
+  },
+  {
+    "name": "Dai",
+    "symbol": "DAI",
+    "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+    "decimals": 18,
+    "chainId": 1
+  },
+  {
+    "name": "Wrapped Bitcoin",
+    "symbol": "WBTC",
+    "address": "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599",
+    "decimals": 8,
+    "chainId": 1
+  },
+  {
+    "name": "agEUR",
+    "symbol": "agEUR",
+    "address": "0x1a7e4e63778B4f12a199C062f3eFdD288afCBce8",
+    "decimals": 18,
+    "chainId": 1
+  },
+  {
+    "name": "Gemini Dollar",
+    "symbol": "GUSD",
+    "address": "0x056Fd409e1d7A124BD7017459Dfea2F387B6d5Cd",
+    "decimals": 2,
+    "chainId": 1
+  },
+  {
+    "name": "Liquity USD",
+    "symbol": "LUSD",
+    "address": "0x5f98805a4e8be255a32880fdec7f6728c6568ba0",
+    "decimals": 18,
+    "chainId": 1
+  },
+  {
+    "name": "Euro Coin",
+    "symbol": "EUROC",
+    "address": "0x1aBaEA1f7C830bD89Acc67eC4af516284b1bC33c",
+    "decimals": 6,
+    "chainId": 1
+  },
+  {
+    "name": "Singapore Dollar",
+    "symbol": "XSGD",
+    "address": "0x70e8dE73cE538DA2bEEd35d14187F6959a8ecA96",
+    "decimals": 6,
+    "chainId": 1
+  },
+  {
+    "name": "USD Coin",
+    "symbol": "USDC",
+    "address": "0x2791bfd60d232150bff86b39b7146c0eaaa2ba81",
+    "decimals": 6,
+    "chainId": 137
+  },
+  {
+    "name": "Wrapped Ether",
+    "symbol": "WETH",
+    "address": "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619",
+    "decimals": 18,
+    "chainId": 137
+  },
+  {
+    "name": "Tether",
+    "symbol": "USDT",
+    "address": "0xc2132d05d31c914a87c6611c10748aeb04b58e8f",
+    "decimals": 6,
+    "chainId": 137
+  },
+  {
+    "name": "Dai",
+    "symbol": "DAI",
+    "address": "0x8f3cf7ad23cd3cadbd9735aff958023239c6a063",
+    "decimals": 18,
+    "chainId": 137
+  },
+  {
+    "name": "Wrapped Bitcoin",
+    "symbol": "WBTC",
+    "address": "0x1bfd67037b42cf73acf2047067bd4f2c47d9bfd6",
+    "decimals": 8,
+    "chainId": 137
+  }
+]
