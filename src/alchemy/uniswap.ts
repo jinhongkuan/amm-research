@@ -3,8 +3,12 @@ import { Pool, FeeAmount } from "@uniswap/v3-sdk";
 import TOKENS_WITH_FEES from "./constants/tokens_with_fees.json";
 import USD_PEGGED_TOKENS from "./constants/usd_pegged_tokens.json";
 import { BigNumber } from "alchemy-sdk";
-import IUniswapV3PoolABI from "@uniswap/v3-core/artifacts/contracts/interfaces/IUniswapV3Pool.sol/IUniswapV3Pool.json";
+import IUniswapV3PoolArtifact from "@uniswap/v3-core/artifacts/contracts/interfaces/IUniswapV3Pool.sol/IUniswapV3Pool.json";
 import UniswapXDutchOrderRouterABI from "./interfaces/UniswapXDutchOrderRouterABI.json";
+import ERC20_ABI from "./interfaces/ERC20ABI.json";
+import FiatTokenABI from "./interfaces/FiatTokenABI.json";
+import WETH_ABI from "./interfaces/WETHABI.json";
+
 import { EventLog, ethers } from "ethers";
 import addresses from "./constants/addresses.json";
 import * as Alchemy from "./alchemy";
@@ -145,16 +149,18 @@ export const getSwapsForPool = async <T = undefined>(
 ): Promise<(SwapEvent & T)[]> => {
   const poolContract = new ethers.Contract(
     pool.poolAddress,
-    IUniswapV3PoolABI.abi,
+    IUniswapV3PoolArtifact.abi,
     provider
   );
 
   const txEvents = await Alchemy.queryContract(
     poolContract,
-    alchemy,
+    { alchemy, provider },
     fromBlock,
     toBlock,
-    "Swap"
+    ["0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67"],
+    false,
+    [new ethers.Interface(IUniswapV3PoolArtifact.abi)]
   );
 
   return txEvents
@@ -202,19 +208,50 @@ export const getDutchOrderRouterSwapsForTokenPair = async (
   { alchemy, provider }: Alchemy.AlchemyWithProvider
 ): Promise<DutchOrderFilledEvent[]> => {
   const chainId = tokenPair.token0.chainId as unknown as keyof typeof addresses;
-  const dutchRouterContract = new ethers.Contract(
-    addresses[chainId].UNISWAP_X_DUTCH_ORDER_ROUTER,
-    UniswapXDutchOrderRouterABI,
+
+  const token0Contract = new ethers.Contract(
+    tokenPair.token0.address,
+    ERC20_ABI,
     provider
   );
 
-  const txEvents = await Alchemy.queryContract(
-    dutchRouterContract,
-    alchemy,
+  const contractInterfaces = [
+    ERC20_ABI,
+    IUniswapV3PoolArtifact.abi,
+    UniswapXDutchOrderRouterABI,
+    FiatTokenABI,
+    WETH_ABI,
+  ].map((abi) => new ethers.Interface(abi as any));
+
+  const txEvents0 = await Alchemy.queryContract(
+    token0Contract,
+    { alchemy, provider },
     fromBlock,
     toBlock,
-    ["Fill"]
+    [
+      ethers.id("Transfer(address,address,uint256)"),
+      [ethers.zeroPadValue(addresses[chainId].FEE_LAYER, 32)],
+      null,
+    ],
+    true,
+    contractInterfaces
   );
+
+  const txEvents1 = await Alchemy.queryContract(
+    token0Contract,
+    { alchemy, provider },
+    fromBlock,
+    toBlock,
+    [
+      ethers.id("Transfer(address,address,uint256)"),
+      null,
+      [ethers.zeroPadValue(addresses[chainId].FEE_LAYER, 32)],
+    ],
+    true,
+    contractInterfaces
+  );
+
+  const txEvents = [...txEvents0, ...txEvents1];
 
   return txEvents
     .map((events) => {
@@ -222,18 +259,18 @@ export const getDutchOrderRouterSwapsForTokenPair = async (
         (event) =>
           event instanceof EventLog &&
           event.eventName === "Transfer" &&
-          event.args[1] == addresses[chainId].UNISWAP_X_DUTCH_ORDER_ROUTER
+          event.args[1] == addresses[chainId].FEE_LAYER
       )! as any;
 
       const transferFrom = events.find(
         (event) =>
           event instanceof EventLog &&
           event.eventName === "Transfer" &&
-          event.args[1] == addresses[chainId].UNISWAP_X_DUTCH_ORDER_ROUTER
+          event.args[0] == addresses[chainId].FEE_LAYER
       )! as any;
+      if (!transferTo || !transferFrom) return null;
+
       if (
-        !transferTo ||
-        !transferFrom ||
         !(
           (transferTo.address == tokenPair.token0.address &&
             transferFrom.address == tokenPair.token1.address) ||
@@ -241,7 +278,7 @@ export const getDutchOrderRouterSwapsForTokenPair = async (
             transferFrom.address == tokenPair.token0.address)
         )
       ) {
-        console.log(events);
+        console.log(transferTo.address, transferFrom.address);
         return null;
       }
 

@@ -6,12 +6,29 @@ import { getSDKProvider } from "./alchemy";
 import { getBlockNumberByTimestamp } from "./ethers";
 import * as Uniswap from "./uniswap";
 
+const groupOrdersBySenders = (
+  dataset: (Uniswap.DutchOrderFilledEvent[] | Uniswap.SwapEvent[])[]
+) => {
+  const senders: {
+    [sender: string]: (Uniswap.DutchOrderFilledEvent | Uniswap.SwapEvent)[];
+  } = {};
+  dataset.forEach((events) => {
+    events.forEach((event) => {
+      if (!senders[event.sender]) {
+        senders[event.sender] = [];
+      }
+      senders[event.sender].push(event);
+    });
+  });
+  return senders;
+};
+
 (async () => {
   const chainId = 1; // Ethereum Mainnet
   const { alchemy, provider } = await getSDKProvider(chainId);
 
-  const startDate = new Date("2023-10-29T00:00:00.000Z");
-  const endDate = new Date("2023-11-01T00:00:00.000Z");
+  const startDate = new Date("2023-12-04T00:00:00.000Z");
+  const endDate = new Date("2023-12-05T00:00:00.000Z");
 
   const startBlock = await getBlockNumberByTimestamp(
     startDate.getTime() / 1000,
@@ -29,14 +46,14 @@ import * as Uniswap from "./uniswap";
     `Token Pair: ${tokenPair.token0.symbol} - ${tokenPair.token1.symbol}`
   );
 
-  //   const fillEvents = await Uniswap.getDutchOrderRouterSwapsForTokenPair(
-  //     tokenPair,
-  //     startBlock,
-  //     endBlock,
-  //     provider
-  //   );
+  const fillEvents = await Uniswap.getDutchOrderRouterSwapsForTokenPair(
+    tokenPair,
+    startBlock,
+    endBlock,
+    { alchemy, provider }
+  );
 
-  //   console.log("Fetched", fillEvents.length, "fill events");
+  console.log("Fetched", fillEvents.length, "fill events");
 
   const poolInfos = await Uniswap.getAllPoolAddressesForTokenPair(tokenPair);
 
@@ -73,12 +90,17 @@ import * as Uniswap from "./uniswap";
     console.log("First swap through router:", routerSwaps[0]);
   }
 
-  const frontendSwaps = swapEvents.filter(
-    (event) => event.category === Uniswap.SwapCategory.FEE_LAYER
+  const senders = groupOrdersBySenders([
+    fillEvents.map((event) => ({ ...event, tag: "fillEvent" })),
+    directSwaps.map((event) => ({ ...event, tag: "directSwap" })),
+    routerSwaps.map((event) => ({ ...event, tag: "routerSwap" })),
+  ]);
+
+  // Sort senders by number of events and display top 10
+  const sortedSenders = Object.entries(senders).sort(
+    (a, b) => b[1].length - a[1].length
   );
 
-  console.log("Fetched", frontendSwaps.length, "swaps through frontend");
-  if (routerSwaps.length > 0) {
-    console.log("First swap through frontend:", frontendSwaps[0]);
-  }
+  console.log("Top 10 senders:");
+  console.log(sortedSenders.slice(0, 10).map((s) => [s[0], s[1].length]));
 })();
