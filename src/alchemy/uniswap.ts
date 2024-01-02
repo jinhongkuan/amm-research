@@ -40,19 +40,15 @@ export type DutchOrderFilledEvent = {
   amount0: BigNumber;
   amount1: BigNumber;
   hash: string;
-  category: SwapCategory.FEE_LAYER;
 };
 
-export enum SwapCategory {
+export enum Category {
   DIRECT,
   ROUTER,
-  FEE_LAYER,
+  FRONTEND_FEES,
 }
 
-export type eventsProcessor<T> = (
-  events: EventLog[],
-  swapEvent: SwapEvent
-) => SwapEvent & T;
+export type eventsProcessor<T> = (events: EventLog[]) => T;
 
 /**
  * This function returns all possible token pairs from the TOKENS_WITH_FEES list that are on the specified chainId.
@@ -186,7 +182,7 @@ export const getSwapsForPool = async <T = undefined>(
       } as SwapEvent;
 
       return eventProcessor
-        ? eventProcessor(events, swapEventContent)
+        ? { ...swapEventContent, ...eventProcessor(events) }
         : swapEventContent;
     })
     .filter((x) => !!x) as (SwapEvent & T)[];
@@ -201,12 +197,13 @@ export const getSwapsForPool = async <T = undefined>(
  * @param {JsonRpcProvider} provider - The JSON-RPC provider to use for the query.
  * @returns {Promise<DutchOrderFilledEvent[]>} - A promise that resolves to an array of Dutch Order Filled Events.
  */
-export const getDutchOrderRouterSwapsForTokenPair = async (
+export const getDutchOrderRouterSwapsForTokenPair = async <T = undefined>(
   tokenPair: TokenPair,
   fromBlock: number,
   toBlock: number,
-  { alchemy, provider }: Alchemy.AlchemyWithProvider
-): Promise<DutchOrderFilledEvent[]> => {
+  { alchemy, provider }: Alchemy.AlchemyWithProvider,
+  eventProcessor?: eventsProcessor<T>
+): Promise<(DutchOrderFilledEvent & T)[]> => {
   const chainId = tokenPair.token0.chainId as unknown as keyof typeof addresses;
 
   const token0Contract = new ethers.Contract(
@@ -278,7 +275,6 @@ export const getDutchOrderRouterSwapsForTokenPair = async (
             transferFrom.address == tokenPair.token0.address)
         )
       ) {
-        console.log(transferTo.address, transferFrom.address);
         return null;
       }
 
@@ -295,12 +291,13 @@ export const getDutchOrderRouterSwapsForTokenPair = async (
           ? -BigNumber.from(transferTo.data)
           : BigNumber.from(transferFrom.data),
         price: 1,
-        category: SwapCategory.FEE_LAYER,
-      };
+      } as DutchOrderFilledEvent;
 
-      return fillEventContent;
+      return eventProcessor
+        ? { ...eventProcessor(events), ...fillEventContent }
+        : fillEventContent;
     })
-    .filter((x) => !!x) as DutchOrderFilledEvent[];
+    .filter((x) => !!x) as (DutchOrderFilledEvent & T)[];
 };
 
 /**
@@ -312,15 +309,25 @@ export const getDutchOrderRouterSwapsForTokenPair = async (
  * @param {Log | EventLog[]} events - The events to search for a matching address.
  * @param {SwapEvent} swapEvent - The SwapEvent to inject the category into.
  * @param {number} chainId - The chainId to use for looking up the addresses.
- * @returns {SwapEvent & { category: SwapCategory }} - The SwapEvent with the injected category.
+ * @returns {SwapEvent & { category: Category }} - The SwapEvent with the injected category.
  */
-export const makeInjectSwapCategory =
+export const makeInjectSwapEventCategory =
   (chainId: number) =>
-  (
-    events: EventLog[],
-    swapEvent: SwapEvent
-  ): SwapEvent & { category: SwapCategory } => {
+  (events: EventLog[]): { category: Category } => {
     const _chainId = chainId as unknown as keyof typeof addresses;
+
+    if (
+      events.find(
+        (event) =>
+          event instanceof EventLog &&
+          event.eventName === "Transfer" &&
+          event.args[0] == addresses[_chainId].FEE_VAULT
+      )
+    ) {
+      return {
+        category: Category.FRONTEND_FEES,
+      };
+    }
 
     if (
       events.find(
@@ -328,18 +335,39 @@ export const makeInjectSwapCategory =
           event instanceof EventLog &&
           event.eventName === "Swap" &&
           (event.args[0] === addresses[_chainId].UNISWAP_UNIVERSAL_ROUTER ||
-            event.args[0] === addresses[_chainId].UNISWAP_ROUTER_V2)
+            event.args[0] === (addresses[_chainId] as any).UNISWAP_ROUTER_V2)
       )
     ) {
       return {
-        ...swapEvent,
-        category: SwapCategory.ROUTER,
+        category: Category.ROUTER,
       };
     }
 
     return {
-      ...swapEvent,
-      category: SwapCategory.DIRECT,
+      category: Category.DIRECT,
+    };
+  };
+
+export const makeInjectDutchFillOrdersCategory =
+  (chainId: number) =>
+  (events: EventLog[]): { category: Category } => {
+    const _chainId = chainId as unknown as keyof typeof addresses;
+
+    if (
+      events.find(
+        (event) =>
+          event instanceof EventLog &&
+          event.eventName === "Transfer" &&
+          event.args[0] == addresses[_chainId].FEE_VAULT
+      )
+    ) {
+      return {
+        category: Category.FRONTEND_FEES,
+      };
+    }
+
+    return {
+      category: Category.ROUTER,
     };
   };
 

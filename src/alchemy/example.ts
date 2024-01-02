@@ -24,7 +24,7 @@ const groupOrdersBySenders = (
 };
 
 (async () => {
-  const chainId = 1; // Ethereum Mainnet
+  const chainId = 137; // Ethereum Mainnet
   const { alchemy, provider } = await getSDKProvider(chainId);
 
   const startDate = new Date("2023-12-04T00:00:00.000Z");
@@ -50,48 +50,51 @@ const groupOrdersBySenders = (
     tokenPair,
     startBlock,
     endBlock,
-    { alchemy, provider }
+    { alchemy, provider },
+    Uniswap.makeInjectDutchFillOrdersCategory(chainId)
   );
 
-  console.log("Fetched", fillEvents.length, "fill events");
+  const frontendSwaps = fillEvents.filter(
+    (event) => event.category === Uniswap.Category.FRONTEND_FEES
+  );
+
+  let routerSwaps = fillEvents.filter(
+    (event) => event.category === Uniswap.Category.ROUTER
+  );
 
   const poolInfos = await Uniswap.getAllPoolAddressesForTokenPair(tokenPair);
 
-  const poolInfo = poolInfos[2];
-  console.log(
-    `Pool Address: ${poolInfo.poolAddress}, Fee: ${poolInfo.feeAmount}`
+  const swapEvents = Array().concat(
+    await Promise.all(
+      poolInfos.map(
+        async (poolInfo) =>
+          await Uniswap.getSwapsForPool(
+            poolInfo,
+            startBlock,
+            endBlock,
+            { alchemy, provider },
+            Uniswap.makeInjectSwapEventCategory(chainId)
+          ).then((events) =>
+            events.map((event) => ({ ...event, feeAmount: poolInfo.feeAmount }))
+          )
+      )
+    )
   );
-
-  const swapEvents = await Uniswap.getSwapsForPool(
-    poolInfo,
-    startBlock,
-    endBlock,
-    { alchemy, provider },
-    Uniswap.makeInjectSwapCategory(poolInfo.token0.chainId)
-  );
-
-  console.log("Fetched", swapEvents.length, "swap events");
 
   const directSwaps = swapEvents.filter(
-    (event) => event.category === Uniswap.SwapCategory.DIRECT
+    (event) => event.category === Uniswap.Category.DIRECT
   );
 
-  console.log("Fetched", directSwaps.length, "direct swaps");
-  if (directSwaps.length > 0) {
-    console.log("First direct swap:", directSwaps[0]);
-  }
-
-  const routerSwaps = swapEvents.filter(
-    (event) => event.category === Uniswap.SwapCategory.ROUTER
+  routerSwaps = routerSwaps.concat(
+    swapEvents.filter((event) => event.category === Uniswap.Category.ROUTER)
   );
 
-  console.log("Fetched", routerSwaps.length, "router swaps");
-  if (routerSwaps.length > 0) {
-    console.log("First swap through router:", routerSwaps[0]);
-  }
+  console.log(`Number of frontend swaps: ${frontendSwaps.length}`);
+  console.log(`Number of direct swaps: ${directSwaps.length}`);
+  console.log(`Number of router swaps: ${routerSwaps.length}`);
 
   const senders = groupOrdersBySenders([
-    fillEvents.map((event) => ({ ...event, tag: "fillEvent" })),
+    frontendSwaps.map((event) => ({ ...event, tag: "frontendSwap" })),
     directSwaps.map((event) => ({ ...event, tag: "directSwap" })),
     routerSwaps.map((event) => ({ ...event, tag: "routerSwap" })),
   ]);

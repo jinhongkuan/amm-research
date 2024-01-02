@@ -1,3 +1,4 @@
 {
-    "notebook.lineNumbers": "on"
+  "notebook.lineNumbers": "on",
+  "julia.environmentPath": "/Users/olegmanaev/Documents/amm-research"
 }
