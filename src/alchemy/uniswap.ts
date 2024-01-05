@@ -4,6 +4,7 @@ import TOKENS_WITH_FEES from "./constants/tokens_with_fees.json";
 import USD_PEGGED_TOKENS from "./constants/usd_pegged_tokens.json";
 import { BigNumber } from "alchemy-sdk";
 import IUniswapV3PoolArtifact from "@uniswap/v3-core/artifacts/contracts/interfaces/IUniswapV3Pool.sol/IUniswapV3Pool.json";
+import IUniswapV3Factory from "@uniswap/v3-core/artifacts/contracts/interfaces/IUniswapV3Factory.sol/IUniswapV3Factory.json";
 import UniswapXDutchOrderRouterABI from "./interfaces/UniswapXDutchOrderRouterABI.json";
 import ERC20_ABI from "./interfaces/ERC20ABI.json";
 import FiatTokenABI from "./interfaces/FiatTokenABI.json";
@@ -12,6 +13,7 @@ import WETH_ABI from "./interfaces/WETHABI.json";
 import { EventLog, ethers } from "ethers";
 import addresses from "./constants/addresses.json";
 import * as Alchemy from "./alchemy";
+import { factory } from "typescript";
 
 export type TokenPair = {
   token0: Token;
@@ -25,6 +27,7 @@ export type PoolInfo = TokenPair & {
 
 export type SwapEvent = {
   sender: string;
+  blockNumber: number;
   recipient: string;
   amount0: BigNumber;
   amount1: BigNumber;
@@ -49,6 +52,14 @@ export enum Category {
 }
 
 export type eventsProcessor<T> = (events: EventLog[]) => T;
+
+const contractInterfaces = [
+  ERC20_ABI,
+  IUniswapV3PoolArtifact.abi,
+  UniswapXDutchOrderRouterABI,
+  FiatTokenABI,
+  WETH_ABI,
+].map((abi) => new ethers.Interface(abi as any));
 
 /**
  * This function returns all possible token pairs from the TOKENS_WITH_FEES list that are on the specified chainId.
@@ -101,28 +112,41 @@ export const getTokenPairsWithFrontendFees = (chainId: ChainId) => {
  * @param {TokenPair} tokenPair - The token pair to get pool addresses for.
  * @returns {PoolInfo[]} - An array of pool information, including the pool address and fee amount.
  */
-export const getAllPoolAddressesForTokenPair = (
-  tokenPair: TokenPair
-): PoolInfo[] => {
-  return Array(
-    FeeAmount.LOWEST,
-    FeeAmount.LOW,
-    FeeAmount.MEDIUM,
-    FeeAmount.HIGH
-  ).map((feeAmount) => {
-    const address = Pool.getAddress(
-      tokenPair.token0,
-      tokenPair.token1,
-      feeAmount
-    );
+export const getAllPoolAddressesForTokenPair = async (
+  tokenPair: TokenPair,
+  provider: ethers.JsonRpcProvider
+): Promise<PoolInfo[]> => {
+  return (
+    await Promise.all(
+      Array(
+        FeeAmount.LOWEST,
+        FeeAmount.LOW,
+        FeeAmount.MEDIUM,
+        FeeAmount.HIGH
+      ).map(async (feeAmount) => {
+        const fatoryContract = new ethers.Contract(
+          addresses[
+            tokenPair.token0.chainId.toString() as keyof typeof addresses
+          ].UNISWAP_V3_FACTORY,
+          IUniswapV3Factory.abi,
+          provider
+        );
+        const address = await fatoryContract.getPool(
+          tokenPair.token0.address,
+          tokenPair.token1.address,
+          feeAmount
+        );
 
-    return {
-      token0: tokenPair.token0,
-      token1: tokenPair.token1,
-      feeAmount,
-      poolAddress: address,
-    };
-  });
+        if (address === ethers.ZeroAddress) return null;
+        return {
+          token0: tokenPair.token0,
+          token1: tokenPair.token1,
+          feeAmount,
+          poolAddress: address,
+        };
+      })
+    )
+  ).filter((x) => !!x?.poolAddress) as PoolInfo[];
 };
 
 /**
@@ -155,19 +179,22 @@ export const getSwapsForPool = async <T = undefined>(
     fromBlock,
     toBlock,
     ["0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67"],
-    false,
-    [new ethers.Interface(IUniswapV3PoolArtifact.abi)]
+    true,
+    contractInterfaces
   );
 
   return txEvents
-    .map((events) => {
-      const swapEvent = events.find((event) => event.eventName === "Swap")!;
+    .map(({ sender, logs: events }) => {
+      const swapEvent = events.find(
+        (event) => event instanceof EventLog && event.eventName === "Swap"
+      )!;
 
       const { args } = swapEvent;
 
       const swapEventContent = {
         hash: swapEvent.transactionHash,
-        sender: args.sender,
+        blockNumber: swapEvent.blockNumber,
+        sender,
         recipient: args.recipient,
         amount0: args.amount0,
         amount1: args.amount1,
@@ -212,14 +239,6 @@ export const getDutchOrderRouterSwapsForTokenPair = async <T = undefined>(
     provider
   );
 
-  const contractInterfaces = [
-    ERC20_ABI,
-    IUniswapV3PoolArtifact.abi,
-    UniswapXDutchOrderRouterABI,
-    FiatTokenABI,
-    WETH_ABI,
-  ].map((abi) => new ethers.Interface(abi as any));
-
   const txEvents0 = await Alchemy.queryContract(
     token0Contract,
     { alchemy, provider },
@@ -251,7 +270,7 @@ export const getDutchOrderRouterSwapsForTokenPair = async <T = undefined>(
   const txEvents = [...txEvents0, ...txEvents1];
 
   return txEvents
-    .map((events) => {
+    .map(({ sender, logs: events }) => {
       const transferTo = events.find(
         (event) =>
           event instanceof EventLog &&
@@ -282,7 +301,8 @@ export const getDutchOrderRouterSwapsForTokenPair = async <T = undefined>(
 
       const fillEventContent = {
         hash: transferFrom.transactionHash,
-        sender: transferTo.args[0],
+        sender,
+        blockNumber: transferFrom.blockNumber,
         recipient: transferFrom.args[1],
         amount0: flipTokenOrder
           ? BigNumber.from(transferFrom.data)
@@ -321,7 +341,7 @@ export const makeInjectSwapEventCategory =
         (event) =>
           event instanceof EventLog &&
           event.eventName === "Transfer" &&
-          event.args[0] == addresses[_chainId].FEE_VAULT
+          event.args[1] == addresses[_chainId].FEE_VAULT
       )
     ) {
       return {
@@ -358,7 +378,7 @@ export const makeInjectDutchFillOrdersCategory =
         (event) =>
           event instanceof EventLog &&
           event.eventName === "Transfer" &&
-          event.args[0] == addresses[_chainId].FEE_VAULT
+          event.args[1] == addresses[_chainId].FEE_VAULT
       )
     ) {
       return {

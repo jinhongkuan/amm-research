@@ -2,9 +2,11 @@
 This is an example script that utilizes the Alchemy API to retrieve Uniswap v3 data.
 */
 
+import { BigNumber } from "alchemy-sdk";
 import { getSDKProvider } from "./alchemy";
 import { getBlockNumberByTimestamp } from "./ethers";
 import * as Uniswap from "./uniswap";
+import fs from "fs";
 
 const groupOrdersBySenders = (
   dataset: (Uniswap.DutchOrderFilledEvent[] | Uniswap.SwapEvent[])[]
@@ -27,83 +29,125 @@ const groupOrdersBySenders = (
   const chainId = 137; // Ethereum Mainnet
   const { alchemy, provider } = await getSDKProvider(chainId);
 
-  const startDate = new Date("2023-12-04T00:00:00.000Z");
-  const endDate = new Date("2023-12-05T00:00:00.000Z");
+  const startDate = new Date("2023-11-15T00:00:00.000Z");
+  const endDate = new Date("2023-12-01T00:00:00.000Z");
+  const selectTokenPairs = [["USDC.e", "WETH"]];
 
-  const startBlock = await getBlockNumberByTimestamp(
-    startDate.getTime() / 1000,
-    provider
-  );
-
-  const endBlock = await getBlockNumberByTimestamp(
-    endDate.getTime() / 1000,
-    provider
-  );
-
-  const tokenPair = Uniswap.getTokenPairsWithFrontendFees(chainId)[0];
-
-  console.log(
-    `Token Pair: ${tokenPair.token0.symbol} - ${tokenPair.token1.symbol}`
-  );
-
-  const fillEvents = await Uniswap.getDutchOrderRouterSwapsForTokenPair(
-    tokenPair,
-    startBlock,
-    endBlock,
-    { alchemy, provider },
-    Uniswap.makeInjectDutchFillOrdersCategory(chainId)
-  );
-
-  const frontendSwaps = fillEvents.filter(
-    (event) => event.category === Uniswap.Category.FRONTEND_FEES
-  );
-
-  let routerSwaps = fillEvents.filter(
-    (event) => event.category === Uniswap.Category.ROUTER
-  );
-
-  const poolInfos = await Uniswap.getAllPoolAddressesForTokenPair(tokenPair);
-
-  const swapEvents = Array().concat(
-    await Promise.all(
-      poolInfos.map(
-        async (poolInfo) =>
-          await Uniswap.getSwapsForPool(
-            poolInfo,
-            startBlock,
-            endBlock,
-            { alchemy, provider },
-            Uniswap.makeInjectSwapEventCategory(chainId)
-          ).then((events) =>
-            events.map((event) => ({ ...event, feeAmount: poolInfo.feeAmount }))
-          )
+  const tokenPairs = Uniswap.getTokenPairsWithFrontendFees(chainId).filter(
+    (tokenPair) =>
+      selectTokenPairs.some(
+        (selectTokenPair) =>
+          (tokenPair.token0.symbol == selectTokenPair[0] &&
+            tokenPair.token1.symbol == selectTokenPair[1]) ||
+          (tokenPair.token0.symbol == selectTokenPair[1] &&
+            tokenPair.token1.symbol == selectTokenPair[0])
       )
-    )
   );
 
-  const directSwaps = swapEvents.filter(
-    (event) => event.category === Uniswap.Category.DIRECT
-  );
+  const oneWeekInSeconds = 7 * 24 * 60 * 60;
+  const startTimestamp = startDate.getTime() / 1000;
+  const endTimestamp = endDate.getTime() / 1000;
+  let currentStartTimestamp = startTimestamp;
 
-  routerSwaps = routerSwaps.concat(
-    swapEvents.filter((event) => event.category === Uniswap.Category.ROUTER)
-  );
+  while (currentStartTimestamp < endTimestamp) {
+    const currentEndTimestamp = Math.min(
+      currentStartTimestamp + oneWeekInSeconds,
+      endTimestamp
+    );
+    const startBlock = await getBlockNumberByTimestamp(
+      currentStartTimestamp,
+      provider
+    );
+    const endBlock = await getBlockNumberByTimestamp(
+      currentEndTimestamp,
+      provider
+    );
 
-  console.log(`Number of frontend swaps: ${frontendSwaps.length}`);
-  console.log(`Number of direct swaps: ${directSwaps.length}`);
-  console.log(`Number of router swaps: ${routerSwaps.length}`);
+    for (const tokenPair of tokenPairs) {
+      const fillEvents =
+        (chainId as any) == 1
+          ? await Uniswap.getDutchOrderRouterSwapsForTokenPair(
+              tokenPair,
+              startBlock,
+              endBlock,
+              { alchemy, provider },
+              Uniswap.makeInjectDutchFillOrdersCategory(chainId)
+            )
+          : [];
 
-  const senders = groupOrdersBySenders([
-    frontendSwaps.map((event) => ({ ...event, tag: "frontendSwap" })),
-    directSwaps.map((event) => ({ ...event, tag: "directSwap" })),
-    routerSwaps.map((event) => ({ ...event, tag: "routerSwap" })),
-  ]);
+      let frontendSwaps = fillEvents.filter(
+        (event) => event.category === Uniswap.Category.FRONTEND_FEES
+      );
 
-  // Sort senders by number of events and display top 10
-  const sortedSenders = Object.entries(senders).sort(
-    (a, b) => b[1].length - a[1].length
-  );
+      let routerSwaps = fillEvents.filter(
+        (event) => event.category === Uniswap.Category.ROUTER
+      );
 
-  console.log("Top 10 senders:");
-  console.log(sortedSenders.slice(0, 10).map((s) => [s[0], s[1].length]));
+      const poolInfos = await Uniswap.getAllPoolAddressesForTokenPair(
+        tokenPair,
+        provider
+      );
+
+      const swapEvents = [];
+      for (const poolInfo of poolInfos) {
+        console.log(
+          `Fetching swaps for pool ${poolInfo.poolAddress}, with fee ${poolInfo.feeAmount}`
+        );
+
+        const events = await Uniswap.getSwapsForPool(
+          poolInfo,
+          startBlock,
+          endBlock,
+          { alchemy, provider },
+          Uniswap.makeInjectSwapEventCategory(chainId)
+        );
+        for (const event of events) {
+          swapEvents.push({
+            ...event,
+            feeAmount: poolInfo.feeAmount,
+          });
+        }
+      }
+
+      const directSwaps = swapEvents.filter(
+        (event) => event.category == Uniswap.Category.DIRECT
+      );
+
+      frontendSwaps = frontendSwaps.concat(
+        swapEvents.filter(
+          (event) => event.category == Uniswap.Category.FRONTEND_FEES
+        )
+      );
+
+      routerSwaps = routerSwaps.concat(
+        swapEvents.filter((event) => event.category == Uniswap.Category.ROUTER)
+      );
+
+      console.log(`Number of frontend swaps: ${frontendSwaps.length}`);
+      console.log(`Number of direct swaps: ${directSwaps.length}`);
+      console.log(`Number of router swaps: ${routerSwaps.length}`);
+
+      const allSwaps = frontendSwaps.concat(directSwaps, routerSwaps);
+      const fileName = `queries/uniswap-fees/${chainId}/${tokenPair.token0.symbol}-${tokenPair.token1.symbol}-${currentStartTimestamp}-${currentEndTimestamp}.json`;
+      fs.writeFileSync(
+        fileName,
+        JSON.stringify(
+          allSwaps,
+          (key, value) =>
+            typeof value === "bigint"
+              ? value.toString()
+              : value["hex"]
+              ? BigNumber.from(value["hex"]).toString()
+              : value,
+          2
+        )
+      );
+
+      console.log(`Wrote to file: ${fileName}`);
+      await new Promise((resolve) => setTimeout(resolve, 10000));
+      global.gc?.(); // Explicitly suggests garbage collection
+    }
+
+    currentStartTimestamp += oneWeekInSeconds;
+  }
 })();

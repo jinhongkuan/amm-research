@@ -65,24 +65,41 @@ export const queryContract = async (
   topics: any,
   fetchOtherTransactionEvents = false,
   interfaces?: ethers.Interface[]
-) => {
+): Promise<{ sender: string; logs: EventLog[] }[]> => {
   // Hardcode the block range to 2000 to avoid hitting the Alchemy API limit
-  const blockRange = 2000;
-  const txEvents = [];
   const events = [];
-  for (let i = fromBlock; i <= toBlock; i += blockRange) {
-    const endBlock = Math.min(i + blockRange - 1, toBlock);
-    events.push(
-      ...(await provider.getLogs({
-        fromBlock: i,
-        toBlock: endBlock,
-        address: contract.getAddress(),
-        topics: topics,
-      }))
-    );
+  const address = await contract.getAddress();
+  for (let i = fromBlock; i <= toBlock; ) {
+    let blockRange = 2000;
+    let endBlock = Math.min(i + blockRange - 1, toBlock);
+    let logs: ethers.Log[] = [];
+    let success = false;
+    let delay = 100;
+    while (!success) {
+      try {
+        logs = await provider.getLogs({
+          fromBlock: i,
+          toBlock: endBlock,
+          address: address,
+          topics: topics,
+        });
+        success = true;
+      } catch (error) {
+        console.log("error fetching logs", error);
+        console.log("reducing block range to", blockRange / 2);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        blockRange = Math.max(Math.round(blockRange / 2), 1);
+        if (blockRange <= 1) {
+          break;
+        }
+        endBlock = Math.min(i + blockRange - 1, toBlock);
+      }
+    }
+    events.push(...logs);
+    i = endBlock + 1;
+    console.log("fetched", events.length, "events");
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
-
-  console.log("Fetched", events.length, "events");
   let txGroupedEvents;
   if (fetchOtherTransactionEvents) {
     let fails = 0;
@@ -94,8 +111,10 @@ export const queryContract = async (
           async (txHash) =>
             await alchemy.core
               .getTransactionReceipt(txHash)
-              .then((receipt) =>
-                receipt?.logs.map((log) => {
+              .then((receipt) => {
+                if (!receipt) return null;
+                const sender = receipt.from;
+                const logs = receipt.logs.map((log) => {
                   // Cycle through possible interfaces
                   const contractEvent = interfaces
                     ?.map((i) => i.getEvent(log.topics[0]))
@@ -111,44 +130,69 @@ export const queryContract = async (
                     contractEvent
                   );
                   return eventLog;
-                })
-              )
+                });
+                return {
+                  sender,
+                  logs,
+                };
+              })
               .catch((e) => {
                 fails += 1;
+
                 return null;
               })
         )
       )
-    ).filter((tx) => tx != null) as EventLog[][];
-    console.log(
-      "Fetched",
-      `${txGroupedEvents.length - fails}/${txGroupedEvents.length}`,
-      "transactions"
-    );
+    ).filter((tx) => tx != null) as {
+      sender: string;
+      logs: EventLog[];
+    }[];
   } else
     txGroupedEvents = Object.values(
-      events.reduce((acc, curr) => {
-        const txHash = curr.transactionHash;
-        if (!acc[txHash]) {
-          acc[txHash] = [];
-        }
+      (
+        await Promise.all(
+          events.map(async (event) => ({
+            ...event,
+            sender: await alchemy.core
+              .getTransactionReceipt(event.transactionHash)
+              .then((receipt) => receipt?.from),
+          }))
+        )
+      ).reduce(
+        (acc, curr) => {
+          const txHash = curr.transactionHash;
+          if (!acc[txHash]) {
+            if (!curr.sender) return acc;
+            acc[txHash] = {
+              sender: curr.sender,
+              logs: [],
+            };
+          }
 
-        const contractEvent = interfaces
-          ?.map((i) => i.getEvent(curr.topics[0]))
-          .find((e) => e);
+          const contractEvent = interfaces
+            ?.map((i) => i.getEvent(curr.topics[0]))
+            .find((e) => e);
 
-        if (!contractEvent) {
+          if (!contractEvent) {
+            return acc;
+          }
+
+          const eventLog = new EventLog(
+            curr as any,
+            contract.interface,
+            contractEvent
+          );
+          acc[txHash].logs.push(eventLog);
           return acc;
-        }
-
-        const eventLog = new EventLog(
-          curr as any,
-          contract.interface,
-          contractEvent
-        );
-        acc[txHash].push(eventLog);
-        return acc;
-      }, {} as Record<string, ethers.EventLog[]>)
+        },
+        {} as Record<
+          string,
+          {
+            sender: string;
+            logs: EventLog[];
+          }
+        >
+      )
     );
 
   return txGroupedEvents;

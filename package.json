@@ -20,6 +20,7 @@
   },
   "devDependencies": {
     "@graphprotocol/client-cli": "^3.0.0",
+    "mocha": "^10.2.0",
     "ts-node": "^10.9.1"
   }
 }
