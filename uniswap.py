@@ -12,6 +12,8 @@ from typing import Optional
 from web3.types import HexBytes
 from data import AssetTransfer, SwapEvent, Log, load_from_csv, save_to_csv
 from utils import get_block_by_timestamp
+import pytz 
+
 chain = "polygon"
 url = f"https://polygon-mainnet.g.alchemy.com/v2/{os.environ.get('ALCHEMY_API_KEY')}"
 w3 = Web3(Web3.HTTPProvider(url))
@@ -22,10 +24,12 @@ with open('constants.json', 'r') as f:
     constants = json.load(f)
 
 
-from_block = get_block_by_timestamp(datetime.datetime(2023, 9, 1, 0, 0, 0), chain)
-switch_block = get_block_by_timestamp(datetime.datetime(2023, 10, 17, 0, 0, 0), chain)
-to_block = get_block_by_timestamp(datetime.datetime(2023, 12, 1, 0, 0, 0), chain)
+from_block = get_block_by_timestamp(datetime.datetime(2023, 9, 1, 0, 0, 0, tzinfo=pytz.utc), chain)
+switch_block = get_block_by_timestamp(datetime.datetime(2023, 10, 17, 0, 0, 0, tzinfo=pytz.utc), chain)
+to_block = get_block_by_timestamp(datetime.datetime(2023, 12, 1, 0, 0, 0, tzinfo=pytz.utc), chain)
 
+
+print(from_block, switch_block, to_block)
 
 def get_asset_transfers(address, from_block, to_block):
     payload = {
@@ -105,5 +109,5 @@ def split_asset_transfers_by_pool(asset_transfers: list[AssetTransfer], from_blo
                 save_to_csv(transfers, f"asset_transfers_by_pool/{pool}_{from_block}_{to_block}.csv", AssetTransfer)
 
 
-alchemy_call_batch_blocks(get_asset_transfers,  AssetTransfer, "asset_transfers", switch_block, to_block, constants["POLYGON_UNISWAP_FEECOLLECTOR_LEGACY"])
-alchemy_call_batch_blocks(get_swaps, SwapEvent, "swaps", from_block, to_block, constants["POLYGON_UNISWAP_SWAP_CONTRACT"])
+alchemy_call_batch_blocks(get_asset_transfers,  AssetTransfer, "asset_transfers", 48810868, 50591741, constants["POLYGON_UNISWAP_FEECOLLECTOR_LEGACY"])
+alchemy_call_batch_blocks(get_swaps, SwapEvent, "swaps", 48810868, 50591741, constants["POLYGON_UNISWAP_SWAP_CONTRACT"])
