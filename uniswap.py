@@ -10,14 +10,15 @@ import time
 from dataclass_csv import DataclassReader, DataclassWriter
 from typing import Optional
 from web3.types import HexBytes
-from data import AssetTransfer, SwapEvent, Log, load_from_csv, save_to_csv
+from data import AssetTransfer, SwapEvent, SwapEventV2, Log, load_from_csv, save_to_csv
 from utils import get_block_by_timestamp
 import pytz 
 
-chain = "polygon"
-url = f"https://polygon-mainnet.g.alchemy.com/v2/{os.environ.get('ALCHEMY_API_KEY')}"
+chain = "ethereum"
+url = f"https://eth-mainnet.g.alchemy.com/v2/{os.environ.get('ALCHEMY_API_KEY')}"
 w3 = Web3(Web3.HTTPProvider(url))
 uniswap_router_abi = json.load(open("abis/uniswap_router.json"))
+uniswap_v2_pool_abi = json.load(open("abis/uniswap_v2_pool.json"))
 
 # Read constants.json
 with open('constants.json', 'r') as f:
@@ -60,9 +61,15 @@ def get_asset_transfers(address, from_block, to_block):
     return list(map(AssetTransfer.from_dict, response.json()["result"]["transfers"]))
 
 def get_swaps(address, from_block, to_block):
+    print(address, from_block, to_block)
     contract = w3.eth.contract(address=address, abi=uniswap_router_abi)
     logs = contract.events.Swap().get_logs(from_block=from_block, to_block=to_block)
     return list(map(SwapEvent.from_dict, logs))
+
+def get_v2_pool_swaps(address, from_block, to_block):
+    contract = w3.eth.contract(address=address, abi=uniswap_v2_pool_abi)
+    logs = contract.events.Swap().get_logs(from_block=from_block, to_block=to_block)
+    return list(map(SwapEventV2.from_dict, logs))
 
 def get_asset_transfer_pool(router_address: str, hash: str):
     # Read the logs and determine which pool does the swap take place in 
@@ -80,7 +87,15 @@ def alchemy_call_batch_blocks(func, cls, task_name, from_block, to_block, *args)
     filename = f"{task_name}_{from_block}_{to_block}.csv"
     if os.path.exists(filename):
         logs = load_from_csv(filename, cls)
-        from_block = int(logs[-1].blockNum, 16) + 1 if logs[-1].blockNum.startswith('0x') else int(logs[-1].blockNum) + 1
+        
+        if cls == AssetTransfer:
+            from_block = int(logs[-1].blockNum, 16) + 1 if logs[-1].blockNum.startswith('0x') else int(logs[-1].blockNum) + 1
+        elif cls == SwapEvent:
+            from_block = logs[-1].blockNumber + 1
+        elif cls == SwapEventV2:
+            from_block = logs[-1].blockNumber + 1
+        else:
+            raise ValueError(f"Unsupported class: {cls}")
 
     current_from_block = from_block
     current_to_block = min(current_from_block + ALCHEMY_MAX_LOG_WINDOW, to_block)
@@ -108,5 +123,5 @@ def split_asset_transfers_by_pool(asset_transfers: list[AssetTransfer], from_blo
             for pool, transfers in pool_transfers.items():
                 save_to_csv(transfers, f"asset_transfers_by_pool/{pool}_{from_block}_{to_block}.csv", AssetTransfer)
 
-asset_transfers = load_from_csv("asset_transfers_48810868_50600174.csv", AssetTransfer)
-split_asset_transfers_by_pool(asset_transfers, 48810868, 50600174)
+alchemy_call_batch_blocks(get_v2_pool_swaps,  SwapEventV2, "swaps_ethereum_v2_300",  from_block, to_block, constants["ethereum"]["v2_300"])
+alchemy_call_batch_blocks(get_swaps,  SwapEvent, "swaps_ethereum_v3_50",  from_block, to_block, constants["ethereum"]["v3_50"])

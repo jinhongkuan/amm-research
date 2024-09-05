@@ -75,6 +75,46 @@ class SwapEvent:
             raise ValueError(f"Invalid data format in SwapEvent: {e}")
 
 @dataclass
+class SwapEventV2:
+    sender: str
+    to: str
+    amount0In: int
+    amount1In: int
+    amount0Out: int
+    amount1Out: int
+    event: str
+    logIndex: int
+    transactionIndex: int
+    transactionHash: str
+    address: str
+    blockHash: str
+    blockNumber: int
+
+    @classmethod
+    def from_dict(cls, attr_dict):
+        try:
+            args = attr_dict['args']
+            return cls(
+                sender=args['sender'],
+                to=args['to'],
+                amount0In=args['amount0In'],
+                amount1In=args['amount1In'],
+                amount0Out=args['amount0Out'],
+                amount1Out=args['amount1Out'],
+                event=attr_dict['event'],
+                logIndex=attr_dict['logIndex'],
+                transactionIndex=attr_dict['transactionIndex'],
+                transactionHash="0x" + attr_dict['transactionHash'].hex() if isinstance(attr_dict['transactionHash'], bytes) else attr_dict['transactionHash'],
+                address=attr_dict['address'],
+                blockHash="0x" + attr_dict['blockHash'].hex() if isinstance(attr_dict['blockHash'], bytes) else attr_dict['blockHash'],
+                blockNumber=attr_dict['blockNumber']
+            )
+        except KeyError as e:
+            raise ValueError(f"Missing required key in SwapEventV2 data: {e}")
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Invalid data format in SwapEventV2: {e}")
+
+@dataclass
 class Log:
     blockHash: str
     address: str
