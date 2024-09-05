@@ -13,18 +13,6 @@ from_block = get_block_by_timestamp(datetime.datetime(2023, 9, 1, 0, 0, 0, tzinf
 switch_block = get_block_by_timestamp(datetime.datetime(2023, 10, 17, 0, 0, 0, tzinfo=pytz.utc), chain)
 to_block = get_block_by_timestamp(datetime.datetime(2023, 12, 1, 0, 0, 0, tzinfo=pytz.utc), chain)
 
-
-# Read constants.json
-# with open('constants.json', 'r') as f:
-#     constants = json.load(f)
-# pool = constants["POLYGON_UNISWAP_SWAP_CONTRACT"]
-# swaps : list[SwapEvent] = load_from_csv(f"swaps_{from_block}_{to_block}.csv", SwapEvent)
-# asset_transfers : list[AssetTransfer] = load_from_csv(f"asset_transfers_by_pool/{pool.lower()}_{from_block}_{to_block}.csv", AssetTransfer)
-
-# Separate swap into two categories:
-# 1. Swap that does not have a matching asset transfer
-# 2. Swap that has a matching asset transfer - this implies frontend fees are incurred
-
 def match_swap_asset_transfer(swap: SwapEvent, asset_transfer: AssetTransfer) -> bool:
     return swap.transactionHash.lower() == asset_transfer.hash.lower()
 
