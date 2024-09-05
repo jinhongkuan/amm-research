@@ -5,8 +5,8 @@ from uniswap import get_asset_transfer_pool
 import json
 
 chain = "polygon"
-from_block = get_block_by_timestamp(datetime.datetime(2023, 11, 1, 0, 0, 0), chain)
-to_block = from_block + 20000
+from_block = 48810868
+to_block = 50600174
 
 # Read constants.json
 with open('constants.json', 'r') as f:

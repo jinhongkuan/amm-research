@@ -3,3 +3,5 @@ web3
 dataclass-csv
 setuptools
 pytz
+statsmodels
+numpy==2.0.0
