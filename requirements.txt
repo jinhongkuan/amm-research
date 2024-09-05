@@ -5,3 +5,4 @@ setuptools
 pytz
 statsmodels
 numpy==2.0.0
+pandas

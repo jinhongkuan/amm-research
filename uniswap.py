@@ -13,6 +13,7 @@ from web3.types import HexBytes
 from data import AssetTransfer, SwapEvent, SwapEventV2, Log, load_from_csv, save_to_csv
 from utils import get_block_by_timestamp
 import pytz 
+import csv 
 
 chain = "ethereum"
 url = f"https://eth-mainnet.g.alchemy.com/v2/{os.environ.get('ALCHEMY_API_KEY')}"
@@ -112,6 +113,19 @@ def alchemy_call_batch_blocks(func, cls, task_name, from_block, to_block, *args)
         time.sleep(1)   
     return logs
 
+def get_v2_total_supply(address, from_block, to_block):
+    contract = w3.eth.contract(address=address, abi=uniswap_v2_pool_abi)
+    total_supply = []
+    for i in range(from_block, to_block):
+        try:
+            total_supply.append(contract.functions.totalSupply().call(block_identifier=i))
+            if i % 100 == 0 or i == to_block - 1:
+                json.dump(total_supply, open(f"total_supply_{from_block}_{to_block}.json", "w"))
+        except Exception as e:
+            print(e, "retrying...")
+            time.sleep(3)
+    return total_supply
+
 def split_asset_transfers_by_pool(asset_transfers: list[AssetTransfer], from_block, to_block):
 
     # Pre-processing
@@ -123,5 +137,6 @@ def split_asset_transfers_by_pool(asset_transfers: list[AssetTransfer], from_blo
             for pool, transfers in pool_transfers.items():
                 save_to_csv(transfers, f"asset_transfers_by_pool/{pool}_{from_block}_{to_block}.csv", AssetTransfer)
 
-alchemy_call_batch_blocks(get_v2_pool_swaps,  SwapEventV2, "swaps_ethereum_v2_300",  from_block, to_block, constants["ethereum"]["v2_300"])
-alchemy_call_batch_blocks(get_swaps,  SwapEvent, "swaps_ethereum_v3_50",  from_block, to_block, constants["ethereum"]["v3_50"])
+# alchemy_call_batch_blocks(get_v2_pool_swaps,  SwapEventV2, "swaps_ethereum_v2_300",  from_block, to_block, constants["ethereum"]["v2_300"])
+# alchemy_call_batch_blocks(get_swaps,  SwapEvent, "swaps_ethereum_v3_50",  from_block, to_block, constants["ethereum"]["v3_50"])
+# total_supply_column = get_v2_total_supply(constants["ethereum"]["v2_300"], from_block, to_block) 3.126285639228751e17
