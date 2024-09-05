@@ -108,6 +108,5 @@ def split_asset_transfers_by_pool(asset_transfers: list[AssetTransfer], from_blo
             for pool, transfers in pool_transfers.items():
                 save_to_csv(transfers, f"asset_transfers_by_pool/{pool}_{from_block}_{to_block}.csv", AssetTransfer)
 
-
-alchemy_call_batch_blocks(get_asset_transfers,  AssetTransfer, "asset_transfers", 48810868, 50600174, constants["POLYGON_UNISWAP_FEECOLLECTOR_LEGACY"])
-alchemy_call_batch_blocks(get_swaps, SwapEvent, "swaps", 48810868, 50600174, constants["POLYGON_UNISWAP_SWAP_CONTRACT"])
+asset_transfers = load_from_csv("asset_transfers_48810868_50600174.csv", AssetTransfer)
+split_asset_transfers_by_pool(asset_transfers, 48810868, 50600174)
