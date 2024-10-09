@@ -1,8 +1,10 @@
 requests
-web3
+web3==6.20.3
 dataclass-csv
 setuptools
 pytz
 statsmodels
 numpy==2.0.0
 pandas
+uniswap-python
+matplotlib

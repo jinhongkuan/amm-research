@@ -115,6 +115,88 @@ class SwapEventV2:
             raise ValueError(f"Invalid data format in SwapEventV2: {e}")
 
 @dataclass
+class MintEvent:
+    sender: str
+    owner: str
+    tickLower: int
+    tickUpper: int
+    amount: int
+    amount0: int
+    amount1: int
+    event: str
+    logIndex: int
+    transactionIndex: int
+    transactionHash: str
+    address: str
+    blockHash: str
+    blockNumber: int
+
+    @classmethod
+    def from_dict(cls, attr_dict):
+        try:
+            args = attr_dict['args']
+            return cls(
+                sender=args['sender'],
+                owner=args['owner'],
+                tickLower=args['tickLower'],
+                tickUpper=args['tickUpper'],
+                amount=int(args['amount']),
+                amount0=int(args['amount0']),
+                amount1=int(args['amount1']),
+                event=attr_dict['event'],
+                logIndex=attr_dict['logIndex'],
+                transactionIndex=attr_dict['transactionIndex'],
+                transactionHash="0x" + attr_dict['transactionHash'].hex() if isinstance(attr_dict['transactionHash'], bytes) else attr_dict['transactionHash'],
+                address=attr_dict['address'],
+                blockHash="0x" + attr_dict['blockHash'].hex() if isinstance(attr_dict['blockHash'], bytes) else attr_dict['blockHash'],
+                blockNumber=attr_dict['blockNumber']
+            )
+        except KeyError as e:
+            raise ValueError(f"Missing required key in MintEvent data: {e}")
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Invalid data format in MintEvent: {e}")
+
+@dataclass
+class BurnEvent:
+    owner: str
+    tickLower: int
+    tickUpper: int
+    amount: int
+    amount0: int
+    amount1: int
+    event: str
+    logIndex: int
+    transactionIndex: int
+    transactionHash: str
+    address: str
+    blockHash: str
+    blockNumber: int
+
+    @classmethod
+    def from_dict(cls, attr_dict):
+        try:
+            args = attr_dict['args']
+            return cls(
+                owner=args['owner'],
+                tickLower=args['tickLower'],
+                tickUpper=args['tickUpper'],
+                amount=int(args['amount']),
+                amount0=int(args['amount0']),
+                amount1=int(args['amount1']),
+                event=attr_dict['event'],
+                logIndex=attr_dict['logIndex'],
+                transactionIndex=attr_dict['transactionIndex'],
+                transactionHash="0x" + attr_dict['transactionHash'].hex() if isinstance(attr_dict['transactionHash'], bytes) else attr_dict['transactionHash'],
+                address=attr_dict['address'],
+                blockHash="0x" + attr_dict['blockHash'].hex() if isinstance(attr_dict['blockHash'], bytes) else attr_dict['blockHash'],
+                blockNumber=attr_dict['blockNumber']
+            )
+        except KeyError as e:
+            raise ValueError(f"Missing required key in BurnEvent data: {e}")
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Invalid data format in BurnEvent: {e}")
+
+@dataclass
 class Log:
     blockHash: str
     address: str
@@ -151,6 +233,7 @@ def save_to_csv(logs, filename, cls):
     with open(filename, 'w') as f:
         writer = DataclassWriter(f, logs, cls)
         writer.write()
+        print("Total entries", len(logs))
 
 def load_from_csv(filename, cls):
     with open(filename, 'r') as f:

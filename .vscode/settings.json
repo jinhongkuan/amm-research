@@ -1,3 +1,4 @@
 {
-  "notebook.lineNumbers": "on"
+  "notebook.lineNumbers": "on",
+  "python.analysis.typeCheckingMode": "basic"
 }
