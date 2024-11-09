@@ -26,16 +26,15 @@ uni = uniswap.Uniswap(address=None, private_key=None,web3=w3, version=3)
 with open('constants.json', 'r') as f:
     constants = json.load(f)
 
-from_time = datetime.datetime(2023, 9, 1, 0, 0, 0, tzinfo=pytz.utc)
-switch_time = datetime.datetime(2023, 10, 17, 0, 0, 0, tzinfo=pytz.utc)
-to_time = datetime.datetime(2023, 12, 1, 0, 0, 0, tzinfo=pytz.utc)
+# from_time = datetime.datetime(2023, 9, 1, 0, 0, 0, tzinfo=pytz.utc)
+# switch_time = datetime.datetime(2023, 10, 17, 0, 0, 0, tzinfo=pytz.utc)
+# to_time = datetime.datetime(2023, 12, 1, 0, 0, 0, tzinfo=pytz.utc)
 
-from_block = get_block_by_datetime(from_time, chain)
-switch_block = get_block_by_datetime(switch_time, chain)
-to_block = get_block_by_datetime(to_time, chain)
+# from_block = get_block_by_datetime(from_time, chain)
+# switch_block = get_block_by_datetime(switch_time, chain)
+# to_block = get_block_by_datetime(to_time, chain)
 
 
-print(from_block, switch_block, to_block)
 
 def get_asset_transfers(address, from_block, to_block):
     payload = {
@@ -65,8 +64,8 @@ def get_asset_transfers(address, from_block, to_block):
     print(response.json())
     return list(map(AssetTransfer.from_dict, response.json()["result"]["transfers"]))
 
-def get_swaps(address, from_block, to_block):
-    print(address, from_block, to_block)
+def get_swaps(chain, address, from_block, to_block):
+    w3 = Web3(Web3.HTTPProvider(constants[chain]["rpc_url"]))
     contract = w3.eth.contract(address=address, abi=uniswap_router_abi)
     logs = contract.events.Swap().get_logs(fromBlock=from_block, toBlock=to_block)
     return list(map(SwapEvent.from_dict, logs))
@@ -99,6 +98,17 @@ def alchemy_call_batch_blocks(func, cls, task_name, from_block, to_block, *args)
         filename = f"{task_name}_{current_from_block}_{min(current_from_block + FILE_CHUNK_ENTRIES - 1, to_block)}.csv"
         
         if os.path.exists(filename):
+             # Determine if the range has been completed 
+            next_file_index = file_index + 1
+            next_file_from_block = from_block + next_file_index * FILE_CHUNK_ENTRIES
+            next_file_to_block = min(next_file_from_block + FILE_CHUNK_ENTRIES - 1, to_block)
+            if os.path.exists(f"{task_name}_{next_file_from_block}_{next_file_to_block}.csv"):
+                current_from_block = next_file_to_block + 1
+                current_to_block = min(current_from_block + ALCHEMY_MAX_LOG_WINDOW, to_block)
+                file_index += 1
+                print("skipping", current_from_block, current_to_block)
+                continue
+
             chunk_logs = load_from_csv(filename, cls)
             if chunk_logs:
                 logs.extend(chunk_logs)
@@ -110,6 +120,7 @@ def alchemy_call_batch_blocks(func, cls, task_name, from_block, to_block, *args)
                     raise ValueError(f"Unsupported class: {cls}")
                 current_to_block = min(current_from_block + ALCHEMY_MAX_LOG_WINDOW, to_block)
                 continue
+           
 
         chunk_logs = []
         while current_from_block < min(from_block + (file_index + 1) * FILE_CHUNK_ENTRIES, to_block):
@@ -123,13 +134,24 @@ def alchemy_call_batch_blocks(func, cls, task_name, from_block, to_block, *args)
                 continue
 
             time.sleep(1)
-
         logs.extend(chunk_logs)
         save_to_csv(chunk_logs, filename, cls)
         file_index += 1
 
     return logs
 
+def combine_csv_files(task_name, cls, from_block, to_block):
+    logs = []
+    while from_block < to_block:
+        filename = f"{task_name}_{from_block}_{min(from_block + FILE_CHUNK_ENTRIES - 1, to_block)}.csv"
+        print(f"Loading {filename}")
+        if not os.path.exists(filename):
+            break
+        chunk_logs = load_from_csv(filename, cls)  
+        logs.extend(chunk_logs)
+        from_block = min(from_block + FILE_CHUNK_ENTRIES, to_block)
+    return logs 
+        
 def get_v2_total_supply(address, from_block, to_block):
     contract = w3.eth.contract(address=address, abi=uniswap_v2_pool_abi)
     total_supply = []
@@ -144,7 +166,7 @@ def get_v2_total_supply(address, from_block, to_block):
     return total_supply
 
 # alchemy_call_batch_blocks(get_v2_pool_swaps,  SwapEventV2, "swaps_ethereum_v2_300",  from_block, to_block, constants["ethereum"]["v2_300"])
-alchemy_call_batch_blocks(get_swaps,  SwapEvent, "swaps_ethereum_v3_50",  from_block, to_block, constants["arbitrum"]["v3_50"])
+# alchemy_call_batch_blocks(get_swaps,  SwapEvent, "swaps_arbitrum_v3_50",  from_block, to_block, constants["arbitrum"]["v3_50"])
 # total_supply_column = get_v2_total_supply(constants["ethereum"]["v2_300"], from_block, to_block) 3.126285639228751e17
 
 # pool = uni.get_pool_instance(constants["arbitrum"]["tokens"]["USDC"], constants["arbitrum"]["tokens"]["USDT"], 500)

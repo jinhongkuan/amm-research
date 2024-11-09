@@ -6,8 +6,12 @@
     "POLYGON_UNISWAP_ROUTER_V3": "0x643770E279d5D0733F21d6DC03A8efbABf3255B4",
     "TRANSFER_TOPIC": "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
     "ethereum": {
-        "v3_50": "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640",
-        "v2_300": "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc"
+        "v3_usdc_weth_50": "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640",
+        "v3_usdc_weth_300": "0x8ad599c3A0ff1De082011EFDDc58f1908eb6e6D8",
+        "v2_usdc_weth_300": "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc",
+        "v3_wbtc_weth_50": "0x4585FE77225b41b697C938B018E2Ac67Ac5a20c0",
+        "v3_wbtc_weth_300": "0xCBCdF9626bC03E24f779434178A73a0B4bad62eD",
+        "rpc_url": "https://mainnet.gateway.tenderly.co"
     },
     "arbitrum": {
         "tokens": {
@@ -16,6 +20,10 @@
             "WETH": "0x82af49447d8a07e3bd95bd0d56f35241523fbab1",
             "WBTC": "0x2f2a2543b76a4166549f7aab2e75bef0aefc5b0f"
         },
-        "v3_50": "0xC6962004f452bE9203591991D15f6b388e09E8D0"
+        "v3_usdc_weth_50": "0xC6962004f452bE9203591991D15f6b388e09E8D0",
+        "v3_usdc_weth_300": "0xc473e2aEE3441BF9240Be85eb122aBB059A3B57c",
+        "v3_wbtc_weth_50": "0x2f5e87C9312fa29aed5c179E456625D79015299c",
+        "v3_wbtc_weth_300": "0x149e36E72726e0BceA5c59d40df2c43F60f5A22D",
+        "rpc_url": "https://arbitrum.gateway.tenderly.co"
     }
 }

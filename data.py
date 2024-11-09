@@ -75,6 +75,26 @@ class SwapEvent:
             raise ValueError(f"Invalid data format in SwapEvent: {e}")
 
 @dataclass
+class SwapEventWithFee(SwapEvent):
+    fee: int
+
+    @classmethod
+    def from_dict(cls, attr_dict):
+        try:
+            base_event = SwapEvent.from_dict(attr_dict)
+            fee = attr_dict.get('fee')
+            if fee is None:
+                raise ValueError("Missing 'fee' in SwapEventWithFee data")
+            return cls(
+                **base_event.__dict__,
+                fee=fee
+            )
+        except KeyError as e:
+            raise ValueError(f"Missing required key in SwapEventWithFee data: {e}")
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Invalid data format in SwapEventWithFee: {e}")
+
+@dataclass
 class SwapEventV2:
     sender: str
     to: str

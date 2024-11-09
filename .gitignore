@@ -2,5 +2,8 @@ node_modules
 .env
 
 queries/alchemy/asset_transfers/*
-swaps_ethereum_v3_50_18037988_18687851.csv
-swaps_ethereum_v2_300_18037988_18687851.csv
+swaps_*.csv
+
+.pkl 
+__pycache__/
+venv/
