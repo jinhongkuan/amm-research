@@ -5,27 +5,39 @@ from dataclass_csv import DataclassWriter, DataclassReader
 
 @dataclass
 class AssetTransfer:
-    blockNum: str
+    blockNum: int
     uniqueId: str
     hash: str
     from_address: str
     to: str
-    value: Decimal
+    value: float
     asset: str
     category: str
+    raw_contract_value: str
+    raw_contract_address: str
+    raw_contract_decimal: str
+    block_timestamp: str
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'AssetTransfer':
         try:
+            # Extract nested data
+            raw_contract = data.get('rawContract', {})
+            metadata = data.get('metadata', {})
+            
             return cls(
-                blockNum=data['blockNum'],
+                blockNum=int(data['blockNum'], 16),
                 uniqueId=data['uniqueId'],
                 hash=data['hash'],
                 from_address=data['from'],
                 to=data['to'],
-                value=Decimal(str(data['value'])),
+                value=float(data['value']),
                 asset=data['asset'],
                 category=data['category'],
+                raw_contract_value=raw_contract.get('value'),
+                raw_contract_address=raw_contract.get('address'),
+                raw_contract_decimal=raw_contract.get('decimal'),
+                block_timestamp=metadata.get('blockTimestamp')
             )
         except KeyError as e:
             raise ValueError(f"Missing required key in asset transfer data: {e}")

@@ -1,7 +1,7 @@
 import modal
 import sys
 import csv
-from uni import alchemy_call_batch_blocks, get_swaps, SwapEvent, constants, save_to_csv
+from uni import alchemy_call_batch_blocks, get_swaps, SwapEvent, SwapEventV2, constants, save_to_csv
 from uniswap_analysis import plot_liquidity_rolling_op
 from datetime import timedelta
 app = modal.App("amm-scraper")
@@ -21,6 +21,17 @@ def get_uniswap_v3_swaps(chain, fee, token_pair, from_block, to_block):
     try:
         logs = alchemy_call_batch_blocks(get_swaps, SwapEvent, f"/root/data/swaps_{chain}_v3_{token_pair}_{fee}", int(from_block), int(to_block), chain, constants[chain][f"v3_{token_pair}_{fee}"])
         save_to_csv(logs, f"/root/data/swaps_{chain}_v3_{token_pair}_{fee}_{from_block}_{to_block}.csv", SwapEvent)
+        return logs
+    except Exception as e:
+        print(f"Error in get_uniswap_v3_swaps: {e}")
+        raise
+
+@app.function(image=image, timeout=24*60*60, concurrency_limit=1, volumes={"/root/data": vol})
+def get_uniswap_v2_swaps(chain, fee, token_pair, from_block, to_block):
+    print(f"Getting {chain} {fee} {token_pair} swaps from {from_block} to {to_block}")
+    try:
+        logs = alchemy_call_batch_blocks(get_swaps, SwapEventV2, f"/root/data/swaps_{chain}_v2_{token_pair}_{fee}", int(from_block), int(to_block), chain, constants[chain][f"v2_{token_pair}_{fee}"])
+        save_to_csv(logs, f"/root/data/swaps_{chain}_v2_{token_pair}_{fee}_{from_block}_{to_block}.csv", SwapEventV2)
         return logs
     except Exception as e:
         print(f"Error in get_uniswap_v3_swaps: {e}")

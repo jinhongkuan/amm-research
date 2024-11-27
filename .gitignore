@@ -7,3 +7,4 @@ swaps_*.csv
 .pkl 
 __pycache__/
 venv/
+*.pyc
