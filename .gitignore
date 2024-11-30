@@ -4,7 +4,7 @@ node_modules
 queries/alchemy/asset_transfers/*
 swaps_*.csv
 
-.pkl 
+*.pkl 
 __pycache__/
 venv/
 *.pyc

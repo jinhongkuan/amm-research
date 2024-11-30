@@ -233,7 +233,8 @@ def compute_columns(w3: Web3, df: pd.DataFrame):
     df["week"] = df["time"].apply(lambda x: datetime.datetime.fromtimestamp(x).isocalendar()[1])
     df.set_index("time", inplace=True)
     df["rolling_liquidity"] = df["liquidity"].astype(float).rolling(window=24*60*60, min_periods=1).mean()
-    df["volatility"] = df["sqrtPriceX96"].astype(float).rolling(window=24*60*60, min_periods=1).apply(lambda x: x.max() - x.min())
+    df["price"] = df["sqrtPriceX96"].astype(float).pow(2).apply(lambda x: x / 2**96)
+    df["volatility"] = df["price"].rolling(window=24*60*60, min_periods=1).apply(lambda x: abs(x.max() - x.min()) / x.mean())
     df["volume"] = np.log(df["amount0"].abs().rolling(window=24*60*60, min_periods=1).sum())
     df["amount0"] = np.abs(df["amount0"])
     print("done")
@@ -583,6 +584,67 @@ def regress_fees_revenue(swaps: list[SwapEvent], fee_collector_address: str, tok
     print(f"Total LP fees: {gfees0_total:.6f}, {gfees1_total:.6f}")
     print(f"Total frontend fees collected: {ff0.sum():.6f}, {ff1.sum():.6f}")
 
+def split_by_trader(df: pd.DataFrame, cutoff_block: int):
+    # Get all unique traders and their trade frequencies
+    trader_frequencies = df.groupby('sender').size()
+    median_frequency = trader_frequencies.median()
+
+    # Find traders who traded both before and after cutoff
+    traders_before = set(df[df['blockNumber'] < cutoff_block]['sender'])
+    traders_after = set(df[df['blockNumber'] >= cutoff_block]['sender'])
+    active_traders = traders_before.intersection(traders_after)
+
+    # Classify traders as retail or institutional based on frequency
+    trader_types = {}
+    for trader in active_traders:
+        frequency = trader_frequencies[trader]
+        trader_types[trader] = 'institutional' if frequency > median_frequency else 'retail'
+
+    # Filter daily_df for active traders only and add trader type
+    filtered_df = pd.DataFrame(df[df['sender'].isin(active_traders)])
+    df = filtered_df
+    df['trader_type'] = df['sender'].map(trader_types)
+    return df
+
+def regress_volume(w3: Web3, swaps_per_group: dict[SwapGroup, list[SwapEvent]], gas_price: pd.Series, cutoff_block: int):
+    # Get combined dataframe
+    df = get_cached_combined_df(w3, swaps_per_group, gas_price)
+    df = split_by_trader(df, cutoff_block)
+
+    for fee in  [True, False]:
+        # Filter data for current fee
+        fee_df = df[df['fee'] == fee]
+        
+        X = pd.get_dummies(fee_df[['platform_fees', 'trader_type']], drop_first=True)
+        X['volatility'] = fee_df['volatility']
+        X['volume'] = fee_df['volume']
+        X['price'] = fee_df['price']
+        X['rolling_liquidity'] = fee_df['rolling_liquidity']
+        X['trader_type:platform_fees'] = X['trader_type_retail'] * X['platform_fees']
+        X['trader_type:rolling_liquidity'] = X['trader_type_retail'] * X['rolling_liquidity']
+        # Target variable y
+        y = fee_df['amount0']
+        
+        # Create cluster groups
+        clusters = fee_df.groupby(['token_pair']).ngroup()
+        
+        # Run regression
+        feature_names = X.columns.tolist()
+        model, std_errors, t_stats, p_values, r2_score, unique_clusters = run_weighted_regression(
+            X, y, clusters
+        )
+        
+        # Calculate weights for printing
+        weights = 1 / clusters.map(clusters.value_counts())
+        weights = weights / weights.sum() * len(weights)
+        
+        # Print results with fee and trader type header
+        print(f"\n=== Results for {50 if fee else 300} bps fee ===")
+        print_regression_results(model, std_errors, t_stats, p_values, r2_score, unique_clusters, feature_names, X, y, weights, show_partial_r2=False)
+
+
+    
+
 import numpy as np
 from scipy.integrate import cumulative_trapezoid
 
@@ -637,5 +699,6 @@ if __name__ == "__main__":
     }
     # # regress_active_liquidity(w3, swaps_per_group, gas_price)
     # # regress_daily_volume(w3, swaps_per_group, gas_price)
-    regress_active_liquidity_by_trader(w3, swaps_per_group, gas_price, 141283870)
+    # regress_active_liquidity_by_trader(w3, swaps_per_group, gas_price, 141283870)
     # regress_fees_revenue(arbitrum_weth_usdc_50, constants["arbitrum"]["fee_collector"], [constants["arbitrum"]["tokens"]["USDC"], constants["arbitrum"]["tokens"]["WETH"]], constants["arbitrum"]["v3_usdc_weth_50"], 143855317, 155687993)
+    regress_volume(w3, swaps_per_group, gas_price, 141283870)

@@ -8,3 +8,5 @@ numpy==2.0.0
 pandas
 uniswap-python
 matplotlib
+scikit-learn
+modal
