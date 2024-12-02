@@ -229,14 +229,21 @@ def compute_columns(w3: Web3, df: pd.DataFrame):
         block_fraction = (block - df.blockNumber.min()) / total_blocks
         return int(first_block_timestamp + block_fraction * total_time_span)
     
+
     df["time"] = df.apply(lambda row: estimate_timestamp(row.blockNumber), axis=1)
     df["week"] = df["time"].apply(lambda x: datetime.datetime.fromtimestamp(x).isocalendar()[1])
+    df["daily_trades"] = df["time"].rolling(window=24*60*60, min_periods=1).apply(lambda x: len(x))
+
     df.set_index("time", inplace=True)
-    df["rolling_liquidity"] = df["liquidity"].astype(float).rolling(window=24*60*60, min_periods=1).mean()
+    df["liquidity"] = np.log(df["liquidity"])
+    df["rolling_liquidity"] = df["liquidity"].rolling(window=24*60*60, min_periods=1).mean()
     df["price"] = df["sqrtPriceX96"].astype(float).pow(2).apply(lambda x: x / 2**96)
-    df["volatility"] = df["price"].rolling(window=24*60*60, min_periods=1).apply(lambda x: abs(x.max() - x.min()) / x.mean())
-    df["volume"] = np.log(df["amount0"].abs().rolling(window=24*60*60, min_periods=1).sum())
-    df["amount0"] = np.abs(df["amount0"])
+    df["volatility"] = df["price"].rolling(window=24*60*60, min_periods=1).std()
+    df["price"] = np.log(df["price"])
+    df = df[df["amount0"] != 0]
+    df["amount0"] = np.log(df["amount0"].abs().astype(float))
+    df["volume"] = df["amount0"].rolling(window=24*60*60, min_periods=1).sum()
+
     print("done")
     # Drop NA rows 
     df.dropna(inplace=True)
@@ -278,19 +285,18 @@ def get_cached_combined_df(w3: Web3, swaps_per_group: dict[SwapGroup, list[SwapE
 def run_weighted_regression(X: pd.DataFrame, y, clusters):
     unique_clusters = clusters.nunique()
     
-    # Initialize model
-    model = LinearRegression()
+    # Initialize model with fit_intercept=True to include constant term
+    model = LinearRegression(fit_intercept=True)
     
     # Calculate weights
     weights = 1 / clusters.map(clusters.value_counts())
     weights = weights / weights.sum() * len(weights)
-    
     # Fit model
     model.fit(X, y, sample_weight=weights)
     
     # Bootstrap for standard errors
     n_bootstrap = 1000
-    bootstrap_coefs = np.zeros((n_bootstrap, X.shape[1]))
+    bootstrap_coefs = np.zeros((n_bootstrap, X.shape[1] + 1))  # +1 for intercept
     y_series = pd.Series(y)
     for i in range(n_bootstrap):
         bootstrap_idx = np.random.choice(len(X), size=len(X), replace=True)
@@ -298,14 +304,15 @@ def run_weighted_regression(X: pd.DataFrame, y, clusters):
         y_boot = y_series.iloc[bootstrap_idx]
         weights_boot = weights.iloc[bootstrap_idx]
         
-        model_boot = LinearRegression()
+        model_boot = LinearRegression(fit_intercept=True)
         model_boot.fit(X_boot, y_boot, sample_weight=weights_boot)
-        bootstrap_coefs[i] = model_boot.coef_
+        bootstrap_coefs[i] = [model_boot.intercept_] + list(model_boot.coef_)
     
-    # Calculate statistics
+    # Calculate statistics including intercept
     std_errors = np.std(bootstrap_coefs, axis=0)
-    t_stats = model.coef_ / std_errors
-    p_values = 2 * (1 - stats.t.cdf(np.abs(t_stats), df=len(X)-len(X.columns)))
+    coefs = [model.intercept_] + list(model.coef_)
+    t_stats = coefs / std_errors
+    p_values = 2 * (1 - stats.t.cdf(np.abs(t_stats), df=len(X)-len(X.columns)-1))
     r2_score = model.score(X, y)
     
     return model, std_errors, t_stats, p_values, r2_score, unique_clusters
@@ -320,14 +327,29 @@ def print_regression_results(model, std_errors, t_stats, p_values, r2_score, uni
     else:
         print(f"{'Variable':<30} {'Coefficient':>12} {'Std Error':>12} {'t-stat':>10} {'P-value':>10} {'Signif':>8}")
     print("-" * 100)
+
+    # Print constant term first
+    stars = ''
+    if p_values[0] < 0.01:
+        stars = '***'
+    elif p_values[0] < 0.05:
+        stars = '**'
+    elif p_values[0] < 0.1:
+        stars = '*'
+
+    if show_partial_r2:
+        print(f"{'Constant':<30} {model.intercept_:>12.4e} {std_errors[0]:>12.4e} {t_stats[0]:>10.2f} {p_values[0]:>10.4e} {'N/A':>10} {stars:>8}")
+    else:
+        print(f"{'Constant':<30} {model.intercept_:>12.4e} {std_errors[0]:>12.4e} {t_stats[0]:>10.2f} {p_values[0]:>10.4e} {stars:>8}")
     
+    # Print other coefficients
     for i, (name, coef) in enumerate(zip(feature_names, model.coef_)):
         stars = ''
-        if p_values[i] < 0.01:
+        if p_values[i+1] < 0.01:
             stars = '***'
-        elif p_values[i] < 0.05:
+        elif p_values[i+1] < 0.05:
             stars = '**'
-        elif p_values[i] < 0.1:
+        elif p_values[i+1] < 0.1:
             stars = '*'
             
         # Calculate partial R² for this variable only if needed
@@ -342,9 +364,9 @@ def print_regression_results(model, std_errors, t_stats, p_values, r2_score, uni
             model_single.fit(X[[name]], residuals_others, sample_weight=weights)
             partial_r2 = model_single.score(X[[name]], residuals_others)
             
-            print(f"{name:<30} {coef:>12.4e} {std_errors[i]:>12.4e} {t_stats[i]:>10.2f} {p_values[i]:>10.4e} {partial_r2:>10.4f} {stars:>8}")
+            print(f"{name:<30} {coef:>12.4e} {std_errors[i+1]:>12.4e} {t_stats[i+1]:>10.2f} {p_values[i+1]:>10.4e} {partial_r2:>10.4f} {stars:>8}")
         else:
-            print(f"{name:<30} {coef:>12.4e} {std_errors[i]:>12.4e} {t_stats[i]:>10.2f} {p_values[i]:>10.4e} {stars:>8}")
+            print(f"{name:<30} {coef:>12.4e} {std_errors[i+1]:>12.4e} {t_stats[i+1]:>10.2f} {p_values[i+1]:>10.4e} {stars:>8}")
     print("-" * 100)
 
 def regress_active_liquidity(w3: Web3, swaps_per_group: dict[SwapGroup, list[SwapEvent]], gas_price: pd.Series):
@@ -367,7 +389,7 @@ def regress_active_liquidity(w3: Web3, swaps_per_group: dict[SwapGroup, list[Swa
         X['volume'] = fee_df['volume']
         
         # Target variable y
-        y = np.log(fee_df['rolling_liquidity'])
+        y = fee_df['rolling_liquidity']
         
         # Create cluster groups
         clusters = fee_df.groupby(['week', 'token_pair']).ngroup()
@@ -467,21 +489,22 @@ def regress_active_liquidity_by_trader(w3: Web3, swaps_per_group: dict[SwapGroup
                 
             # Create feature matrix X
             X = pd.get_dummies(trader_df[['platform_fees']], drop_first=True)
-            X['platform_fees:volatility'] = X['platform_fees'] * trader_df['volatility']
-            X['platform_fees:volume'] = X['platform_fees'] * trader_df['volume']
-            X['volatility'] = trader_df['volatility']
-            X['volume'] = trader_df['volume']
+            X['volatility'] = stats.zscore(trader_df['volatility'])
+            X['volume'] = stats.zscore(trader_df['volume'])
+            X['platform_fees:volatility'] = X['platform_fees'] * X['volatility']
+            X['platform_fees:volume'] = X['platform_fees'] * X['volume']
+
             
             # Target variable y
-            y = np.log(trader_df['rolling_liquidity'])
-            
+            y = trader_df['rolling_liquidity']
+     
             # Create cluster groups
             clusters = trader_df.groupby(['token_pair']).ngroup()
             
             # Run regression
             feature_names = X.columns.tolist()
             model, std_errors, t_stats, p_values, r2_score, unique_clusters = run_weighted_regression(
-                X, y, clusters
+                X, y, clusters,
             )
             
             # Calculate weights for printing
@@ -493,6 +516,7 @@ def regress_active_liquidity_by_trader(w3: Web3, swaps_per_group: dict[SwapGroup
             print_regression_results(model, std_errors, t_stats, p_values, r2_score, unique_clusters, feature_names, X, y, weights, show_partial_r2=False)
 
 def regress_revenue_by_trader(w3: Web3, swaps_per_group: dict[SwapGroup, list[SwapEvent]], gas_price: pd.Series, cutoff_block: int):
+    print("Regressing revenue by trader")
     # Get combined dataframe
     combined_df = get_cached_combined_df(w3, swaps_per_group, gas_price)
 
@@ -607,6 +631,7 @@ def split_by_trader(df: pd.DataFrame, cutoff_block: int):
     return df
 
 def regress_volume(w3: Web3, swaps_per_group: dict[SwapGroup, list[SwapEvent]], gas_price: pd.Series, cutoff_block: int):
+    print("Regressing swap amount")
     # Get combined dataframe
     df = get_cached_combined_df(w3, swaps_per_group, gas_price)
     df = split_by_trader(df, cutoff_block)
@@ -616,10 +641,10 @@ def regress_volume(w3: Web3, swaps_per_group: dict[SwapGroup, list[SwapEvent]], 
         fee_df = df[df['fee'] == fee]
         
         X = pd.get_dummies(fee_df[['platform_fees', 'trader_type']], drop_first=True)
-        X['volatility'] = fee_df['volatility']
-        X['volume'] = fee_df['volume']
-        X['price'] = fee_df['price']
-        X['rolling_liquidity'] = fee_df['rolling_liquidity']
+        X['volatility'] = stats.zscore(fee_df['volatility'])
+        X['volume'] = stats.zscore(fee_df['volume'])
+        X['price'] = stats.zscore(fee_df['price'])
+        X['rolling_liquidity'] = stats.zscore(fee_df['rolling_liquidity'])
         X['trader_type:platform_fees'] = X['trader_type_retail'] * X['platform_fees']
         X['trader_type:rolling_liquidity'] = X['trader_type_retail'] * X['rolling_liquidity']
         # Target variable y
@@ -642,6 +667,42 @@ def regress_volume(w3: Web3, swaps_per_group: dict[SwapGroup, list[SwapEvent]], 
         print(f"\n=== Results for {50 if fee else 300} bps fee ===")
         print_regression_results(model, std_errors, t_stats, p_values, r2_score, unique_clusters, feature_names, X, y, weights, show_partial_r2=False)
 
+def regress_trades_per_day(w3: Web3, swaps_per_group: dict[SwapGroup, list[SwapEvent]], gas_price: pd.Series, cutoff_block: int):
+    print("Regressing trades per day")
+    # Get combined dataframe
+    df = get_cached_combined_df(w3, swaps_per_group, gas_price)
+    df = split_by_trader(df, cutoff_block)
+
+    for fee in  [True, False]:
+        # Filter data for current fee
+        fee_df = df[df['fee'] == fee]
+        
+        X = pd.get_dummies(fee_df[['platform_fees', 'trader_type']], drop_first=True)
+        X['volatility'] = stats.zscore(fee_df['volatility'])
+        X['volume'] = stats.zscore(fee_df['volume'])
+        X['price'] = stats.zscore(fee_df['price'])
+        X['rolling_liquidity'] = stats.zscore(fee_df['rolling_liquidity'])
+        X['trader_type:platform_fees'] = X['trader_type_retail'] * X['platform_fees']
+        X['trader_type:rolling_liquidity'] = X['trader_type_retail'] * X['rolling_liquidity']
+        # Target variable y
+        y = fee_df['daily_trades']
+        
+        # Create cluster groups
+        clusters = fee_df.groupby(['token_pair']).ngroup()
+        
+        # Run regression
+        feature_names = X.columns.tolist()
+        model, std_errors, t_stats, p_values, r2_score, unique_clusters = run_weighted_regression(
+            X, y, clusters
+        )
+        
+        # Calculate weights for printing
+        weights = 1 / clusters.map(clusters.value_counts())
+        weights = weights / weights.sum() * len(weights)
+        
+        # Print results with fee and trader type header
+        print(f"\n=== Results for {50 if fee else 300} bps fee ===")
+        print_regression_results(model, std_errors, t_stats, p_values, r2_score, unique_clusters, feature_names, X, y, weights, show_partial_r2=False)
 
     
 
@@ -702,3 +763,4 @@ if __name__ == "__main__":
     # regress_active_liquidity_by_trader(w3, swaps_per_group, gas_price, 141283870)
     # regress_fees_revenue(arbitrum_weth_usdc_50, constants["arbitrum"]["fee_collector"], [constants["arbitrum"]["tokens"]["USDC"], constants["arbitrum"]["tokens"]["WETH"]], constants["arbitrum"]["v3_usdc_weth_50"], 143855317, 155687993)
     regress_volume(w3, swaps_per_group, gas_price, 141283870)
+    # regress_trades_per_day(w3, swaps_per_group, gas_price, 141283870)
