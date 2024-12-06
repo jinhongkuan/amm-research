@@ -16,7 +16,10 @@ from uni import combine_csv_files, get_frontend_fees, get_global_fees, alchemy_c
 from datetime import timedelta
 from sklearn.linear_model import LinearRegression
 import scipy.stats as stats
-
+import hashlib
+import pickle
+import os
+import csv 
 
 with open('constants.json', 'r') as f:
     constants = json.load(f)
@@ -216,7 +219,7 @@ def plot_swaps_amount_fee_boxplot(swaps: dict[tuple[int, int], list[SwapEvent]])
 
 
 type SwapGroup = tuple[bool, bool, str] # (fee_tier, platform_fees, token_pair)
-def compute_columns(w3: Web3, df: pd.DataFrame):
+def compute_columns_v3(w3: Web3, df: pd.DataFrame):
     first_block_timestamp = get_block_timestamp(w3, int(df.iloc[0].blockNumber))
     last_block_timestamp = get_block_timestamp(w3, int(df.iloc[-1].blockNumber))
     
@@ -250,12 +253,36 @@ def compute_columns(w3: Web3, df: pd.DataFrame):
 
     return df
 
-def get_cached_combined_df(w3: Web3, swaps_per_group: dict[SwapGroup, list[SwapEvent]], gas_price: pd.Series):
-    # Generate hash of input parameters
-    import hashlib
-    import pickle
-    import os
+def compute_columns_v2(w3: Web3, df: pd.DataFrame):
+    first_block_timestamp = get_block_timestamp(w3, int(df.iloc[0].blockNumber))
+    last_block_timestamp = get_block_timestamp(w3, int(df.iloc[-1].blockNumber))
     
+    # Calculate the total time span in seconds
+    total_time_span = last_block_timestamp - first_block_timestamp
+    total_blocks = df.blockNumber.max() - df.blockNumber.min()
+
+    # Create a function to estimate timestamp for each block
+    def estimate_timestamp(block):
+        block_fraction = (block - df.blockNumber.min()) / total_blocks
+        return int(first_block_timestamp + block_fraction * total_time_span)
+    
+
+    df["time"] = df.apply(lambda row: estimate_timestamp(row.blockNumber), axis=1)
+    df["week"] = df["time"].apply(lambda x: datetime.datetime.fromtimestamp(x).isocalendar()[1])
+    df["daily_trades"] = df["time"].rolling(window=24*60*60, min_periods=1).apply(lambda x: len(x))
+
+    df.set_index("time", inplace=True)
+    df = df[(df["amount0In"] + df["amount0Out"]) != 0]
+    df["amount0"] = np.log((df["amount0In"] + df["amount0Out"]).abs().astype(float))
+    df["volume"] = df["amount0"].rolling(window=24*60*60, min_periods=1).sum()
+
+    print("done")
+    # Drop NA rows 
+    df.dropna(inplace=True)
+
+    return df
+
+def get_cached_combined_df_v3(w3: Web3, swaps_per_group: dict[SwapGroup, list[SwapEvent]], gas_price: pd.Series): 
     param_str = str(sorted([(str(k), len(v)) for k,v in swaps_per_group.items()]))
     param_hash = hashlib.md5(param_str.encode()).hexdigest()
     cache_file = f'combined_df_cache_{param_hash}.pkl'
@@ -268,11 +295,46 @@ def get_cached_combined_df(w3: Web3, swaps_per_group: dict[SwapGroup, list[SwapE
         print("Computing data and caching results...")
         combined_df = pd.DataFrame()
         for (fee_tier, platform_fees, token_pair), swaps in swaps_per_group.items():
-            df = compute_columns(w3, pd.DataFrame(swaps))
+            df = compute_columns_v3(w3, pd.DataFrame(swaps))
             df["fee"] = fee_tier
             df["platform_fees"] = platform_fees
             df["token_pair"] = token_pair
             df["gas_price"] = df["blockNumber"].map(gas_price)
+            combined_df = pd.concat([combined_df, df])
+            
+        # Cache the results
+        with open(cache_file, 'wb') as f:
+            pickle.dump(combined_df, f)
+        print(f"Results cached to {cache_file}")
+    
+    return combined_df
+
+type V2V3SwapGroup = tuple[bool, str] # ( platform_fees, token_pair)
+def get_cached_combined_df_v2_and_v3(w3: Web3, v2swaps_per_group: dict[V2V3SwapGroup, list[SwapEventV2]], v3swaps_per_group: dict[V2V3SwapGroup, list[SwapEvent]], gas_price: pd.Series, exchange_price: pd.Series): 
+    param_str = str(sorted([(str(k), len(v)) for k,v in v2swaps_per_group.items()]) + [(str(k), len(v)) for k,v in v3swaps_per_group.items()])
+    param_hash = hashlib.md5(param_str.encode()).hexdigest()
+    cache_file = f'combined_df_cache_{param_hash}.pkl'
+
+    if os.path.exists(cache_file):
+        print(f"Loading cached data from {cache_file}")
+        with open(cache_file, 'rb') as f:
+            combined_df = pickle.load(f)
+    else:
+        print("Computing data and caching results...")
+        combined_df = pd.DataFrame()
+        for (platform_fees, token_pair), swaps in v2swaps_per_group.items():
+            df = compute_columns_v2(w3, pd.DataFrame(swaps))
+            df["platform_fees"] = platform_fees
+            df["token_pair"] = token_pair
+            df["gas_price"] = df["blockNumber"].map(gas_price)
+            df["price"] = df["blockNumber"].map(exchange_price)
+            combined_df = pd.concat([combined_df, df])
+        for (platform_fees, token_pair), swaps in v3swaps_per_group.items():
+            df = compute_columns_v3(w3, pd.DataFrame(swaps))
+            df["platform_fees"] = platform_fees
+            df["token_pair"] = token_pair
+            df["gas_price"] = df["blockNumber"].map(gas_price)
+            df["price"] = df["blockNumber"].map(exchange_price)
             combined_df = pd.concat([combined_df, df])
             
         # Cache the results
@@ -371,7 +433,7 @@ def print_regression_results(model, std_errors, t_stats, p_values, r2_score, uni
 
 def regress_active_liquidity(w3: Web3, swaps_per_group: dict[SwapGroup, list[SwapEvent]], gas_price: pd.Series):
     # Get combined dataframe
-    combined_df = get_cached_combined_df(w3, swaps_per_group, gas_price)
+    combined_df = get_cached_combined_df_v3(w3, swaps_per_group, gas_price)
 
     # Split data by fee and run separate regressions
     for fee in [True, False]:
@@ -410,7 +472,7 @@ def regress_active_liquidity(w3: Web3, swaps_per_group: dict[SwapGroup, list[Swa
 
 def regress_daily_volume(w3: Web3, swaps_per_group: dict[SwapGroup, list[SwapEvent]], gas_price: pd.Series):
     # Get combined dataframe
-    combined_df = get_cached_combined_df(w3, swaps_per_group, gas_price)
+    combined_df = get_cached_combined_df_v3(w3, swaps_per_group, gas_price)
 
     # Split data by fee and run separate regressions 
     for fee in [True, False]:
@@ -451,9 +513,44 @@ def regress_daily_volume(w3: Web3, swaps_per_group: dict[SwapGroup, list[SwapEve
         print(f"\n=== Results for {50 if fee else 300} bps fee ===")
         print_regression_results(model, std_errors, t_stats, p_values, r2_score, unique_clusters, feature_names, X, y, weights)
 
+def regress_did_daily_volume(w3: Web3, affectedSwaps: dict[V2V3SwapGroup, list[SwapEvent]], unaffectedSwaps: dict[V2V3SwapGroup, list[SwapEventV2]], gas_price: pd.Series, exchange_price: pd.Series):
+    # Get combined dataframe
+    combined_df = get_cached_combined_df_v2_and_v3(w3, unaffectedSwaps, affectedSwaps, gas_price, exchange_price)
+
+        
+    # Calculate daily volume by summing amount0 within each day
+    combined_df['day'] = combined_df.index.map(lambda x: datetime.datetime.fromtimestamp(x).date())
+    daily_volume = combined_df.groupby(['day', 'token_pair'])['amount0'].sum().abs().astype(float)
+    combined_df['daily_volume'] = combined_df.apply(lambda x: daily_volume.get((x['day'], x['token_pair']), 0), axis=1)
+        
+    # Create feature matrix X
+    X = pd.get_dummies(combined_df[['platform_fees', 'affected']], drop_first=True)
+    X['platform_fees:affected'] = X['platform_fees'] * X['affected']
+    X['volatility'] = combined_df['volatility']
+    X['price'] = combined_df['price']
+    X['liquidity'] = combined_df['liquidity']
+    # Target variable y - log of daily volume
+    y = np.log(combined_df['daily_volume'])
+    
+    # Create cluster groups
+    clusters = combined_df.groupby(['token_pair']).ngroup()
+    
+    # Run regression
+    feature_names = X.columns.tolist()
+    model, std_errors, t_stats, p_values, r2_score, unique_clusters = run_weighted_regression(
+        X, y, clusters
+    )
+    
+    # Calculate weights for printing
+    weights = 1 / clusters.map(clusters.value_counts())
+    weights = weights / weights.sum() * len(weights)
+    
+    # Print results with fee header
+    print_regression_results(model, std_errors, t_stats, p_values, r2_score, unique_clusters, feature_names, X, y, weights)
+
 def regress_active_liquidity_by_trader(w3: Web3, swaps_per_group: dict[SwapGroup, list[SwapEvent]], gas_price: pd.Series, cutoff_block: int):
     # Get combined dataframe
-    combined_df = get_cached_combined_df(w3, swaps_per_group, gas_price)
+    combined_df = get_cached_combined_df_v3(w3, swaps_per_group, gas_price)
 
     # Separate by trader type 
     # Get all unique traders and their trade frequencies
@@ -476,49 +573,44 @@ def regress_active_liquidity_by_trader(w3: Web3, swaps_per_group: dict[SwapGroup
     combined_df['trader_type'] = combined_df['sender'].map(trader_types)
     # Split data by fee and trader type and run separate regressions
     for fee in [True, False]:
-        for trader_type in ['retail', 'institutional']:
-            # Filter data for current fee and trader type
-            trader_df = combined_df[
-                (combined_df['trader_type'] == trader_type) & 
-                (combined_df['fee'] == fee)
-            ]
+        # Filter data for current fee and trader type
+        trader_df = combined_df[
+            (combined_df['fee'] == fee)
+        ]
+    
             
-            if len(trader_df) == 0:
-                print(f"\nNo data found for {fee} bps fee, {trader_type} traders")
-                continue
-                
-            # Create feature matrix X
-            X = pd.get_dummies(trader_df[['platform_fees']], drop_first=True)
-            X['volatility'] = stats.zscore(trader_df['volatility'])
-            X['volume'] = stats.zscore(trader_df['volume'])
-            X['platform_fees:volatility'] = X['platform_fees'] * X['volatility']
-            X['platform_fees:volume'] = X['platform_fees'] * X['volume']
+        # Create feature matrix X
+        X = pd.get_dummies(trader_df[['platform_fees', 'trader_type']], drop_first=True)
+        X['volatility'] = stats.zscore(trader_df['volatility'])
+        X['volume'] = stats.zscore(trader_df['volume'])
+        X['platform_fees:volatility'] = X['platform_fees'] * X['volatility']
+        X['platform_fees:volume'] = X['platform_fees'] * X['volume']
+        X['trader_type:platform_fees'] = X['trader_type_retail'] * X['platform_fees']
 
-            
-            # Target variable y
-            y = trader_df['rolling_liquidity']
-     
-            # Create cluster groups
-            clusters = trader_df.groupby(['token_pair']).ngroup()
-            
-            # Run regression
-            feature_names = X.columns.tolist()
-            model, std_errors, t_stats, p_values, r2_score, unique_clusters = run_weighted_regression(
-                X, y, clusters,
-            )
-            
-            # Calculate weights for printing
-            weights = 1 / clusters.map(clusters.value_counts())
-            weights = weights / weights.sum() * len(weights)
-            
-            # Print results with fee and trader type header
-            print(f"\n=== Results for {50 if fee else 300} bps fee, {trader_type} traders ===")
-            print_regression_results(model, std_errors, t_stats, p_values, r2_score, unique_clusters, feature_names, X, y, weights, show_partial_r2=False)
+        
+        # Target variable y
+        y = trader_df['rolling_liquidity']
+    
+        # Create cluster groups
+        clusters = trader_df.groupby(['token_pair']).ngroup()
+        
+        # Run regression
+        feature_names = X.columns.tolist()
+        model, std_errors, t_stats, p_values, r2_score, unique_clusters = run_weighted_regression(
+            X, y, clusters,
+        )
+        
+        # Calculate weights for printing
+        weights = 1 / clusters.map(clusters.value_counts())
+        weights = weights / weights.sum() * len(weights)
+        
+        # Print results with fee and trader type header
+        print_regression_results(model, std_errors, t_stats, p_values, r2_score, unique_clusters, feature_names, X, y, weights, show_partial_r2=False)
 
 def regress_revenue_by_trader(w3: Web3, swaps_per_group: dict[SwapGroup, list[SwapEvent]], gas_price: pd.Series, cutoff_block: int):
     print("Regressing revenue by trader")
     # Get combined dataframe
-    combined_df = get_cached_combined_df(w3, swaps_per_group, gas_price)
+    combined_df = get_cached_combined_df_v3(w3, swaps_per_group, gas_price)
 
     # Calculate daily revenue as amount0/liquidity summed over each day
     combined_df['revenue'] = combined_df['amount0'].astype(float) / combined_df['liquidity'].astype(float)
@@ -633,7 +725,7 @@ def split_by_trader(df: pd.DataFrame, cutoff_block: int):
 def regress_volume(w3: Web3, swaps_per_group: dict[SwapGroup, list[SwapEvent]], gas_price: pd.Series, cutoff_block: int):
     print("Regressing swap amount")
     # Get combined dataframe
-    df = get_cached_combined_df(w3, swaps_per_group, gas_price)
+    df = get_cached_combined_df_v3(w3, swaps_per_group, gas_price)
     df = split_by_trader(df, cutoff_block)
 
     for fee in  [True, False]:
@@ -670,7 +762,7 @@ def regress_volume(w3: Web3, swaps_per_group: dict[SwapGroup, list[SwapEvent]], 
 def regress_trades_per_day(w3: Web3, swaps_per_group: dict[SwapGroup, list[SwapEvent]], gas_price: pd.Series, cutoff_block: int):
     print("Regressing trades per day")
     # Get combined dataframe
-    df = get_cached_combined_df(w3, swaps_per_group, gas_price)
+    df = get_cached_combined_df_v3(w3, swaps_per_group, gas_price)
     df = split_by_trader(df, cutoff_block)
 
     for fee in  [True, False]:
@@ -703,7 +795,6 @@ def regress_trades_per_day(w3: Web3, swaps_per_group: dict[SwapGroup, list[SwapE
         # Print results with fee and trader type header
         print(f"\n=== Results for {50 if fee else 300} bps fee ===")
         print_regression_results(model, std_errors, t_stats, p_values, r2_score, unique_clusters, feature_names, X, y, weights, show_partial_r2=False)
-
     
 
 import numpy as np
@@ -738,8 +829,13 @@ if __name__ == "__main__":
     w3 = Web3(Web3.HTTPProvider("https://arbitrum.gateway.tenderly.co"))
     # Create gas price series with block numbers as index
     block_range = range(126855341, 155687993)
-    gas_price = pd.Series(10000000, index=block_range, name='gasPrice')
-    
+
+    # ethereum_gas_price = pd.read_csv("ethereum_gas_price.csv", index_col=0, header=0)
+
+    # btc_price = pd.read_csv("btc_price.csv", index_col=0, header=0)
+    # eth_price = pd.read_csv("eth_price.csv", index_col=0, header=0)
+    # btc_eth_price = pd.DataFrame({'Date': btc_price.index, 'Price': btc_price['Price'] / eth_price['Price']}).set_index('Date')
+
     usdc_weth_50_no_fees = load_from_csv("swaps_arbitrum_v3_usdc_weth_50_126855341_141283870.csv", SwapEvent)
     usdc_weth_300_no_fees = load_from_csv("swaps_arbitrum_v3_usdc_weth_300_126855341_141283870.csv", SwapEvent)
     usdc_weth_50_with_fees = load_from_csv("swaps_arbitrum_v3_usdc_weth_50_141283870_155687993.csv", SwapEvent)
@@ -748,7 +844,13 @@ if __name__ == "__main__":
     wbtc_weth_300_no_fees = load_from_csv("swaps_arbitrum_v3_wbtc_weth_300_126855341_141283870.csv", SwapEvent)
     wbtc_weth_50_with_fees = load_from_csv("swaps_arbitrum_v3_wbtc_weth_50_141283871_155687993.csv", SwapEvent)
     wbtc_weth_300_with_fees = load_from_csv("swaps_arbitrum_v3_wbtc_weth_300_141283871_155687993.csv", SwapEvent)
-    swaps_per_group = {
+
+    ethereum_wbtc_weth_300_no_fees = load_from_csv("swaps_ethereum_v3_wbtc_weth_300_18039180_18367571.csv", SwapEvent)
+    ethereum_wbtc_weth_300_with_fees = load_from_csv("swaps_ethereum_v3_wbtc_weth_300_18367571_18689339.csv", SwapEvent)
+    ethereum_v2_wbtc_weth_300_no_fees = load_from_csv("swaps_ethereum_v2_wbtc_weth_300_18037988_18367571.csv", SwapEventV2)
+    ethereum_v2_wbtc_weth_300_with_fees = load_from_csv("swaps_ethereum_v2_wbtc_weth_300_18367571_18687851.csv", SwapEventV2)
+
+    v2_swaps_per_group = {
         (True, False, "usdc_weth"): usdc_weth_50_no_fees,
         (False, False, "usdc_weth"): usdc_weth_300_no_fees,
         (True, True, "usdc_weth"): usdc_weth_50_with_fees,
@@ -758,9 +860,22 @@ if __name__ == "__main__":
         (True, True, "wbtc_weth"): wbtc_weth_50_with_fees,
         (False, True, "wbtc_weth"): wbtc_weth_300_with_fees
     }
-    # # regress_active_liquidity(w3, swaps_per_group, gas_price)
-    # # regress_daily_volume(w3, swaps_per_group, gas_price)
-    # regress_active_liquidity_by_trader(w3, swaps_per_group, gas_price, 141283870)
+
+    v2_v3_swaps_per_group = {
+        "affected": {
+            (False, "wbtc_weth"): ethereum_wbtc_weth_300_no_fees,
+            (True, "wbtc_weth"): ethereum_wbtc_weth_300_with_fees
+        },
+        "unaffected": {
+            (False, "wbtc_weth"): ethereum_v2_wbtc_weth_300_no_fees,
+            (True, "wbtc_weth"): ethereum_v2_wbtc_weth_300_with_fees
+        }
+    }
+
+    # regress_active_liquidity(w3, swaps_per_group, gas_price)
+    # regress_daily_volume(w3, swaps_per_group, gas_price)
+    regress_active_liquidity_by_trader(w3, v2_swaps_per_group, pd.Series(10000000, index=block_range, name='gasPrice'), 141283870)
     # regress_fees_revenue(arbitrum_weth_usdc_50, constants["arbitrum"]["fee_collector"], [constants["arbitrum"]["tokens"]["USDC"], constants["arbitrum"]["tokens"]["WETH"]], constants["arbitrum"]["v3_usdc_weth_50"], 143855317, 155687993)
-    regress_volume(w3, swaps_per_group, gas_price, 141283870)
+    # regress_volume(w3, v2_swaps_per_group, gas_price, 141283870)
     # regress_trades_per_day(w3, swaps_per_group, gas_price, 141283870)
+    # regress_did_daily_volume(w3, v2_v3_swaps_per_group['affected'], v2_v3_swaps_per_group['unaffected'], gas_price)

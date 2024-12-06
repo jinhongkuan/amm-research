@@ -1,7 +1,7 @@
 import modal
 import sys
 import csv
-from uni import alchemy_call_batch_blocks, get_swaps, SwapEvent, SwapEventV2, constants, save_to_csv
+from uni import alchemy_call_batch_blocks, get_swaps, SwapEvent, SwapEventV2, constants, save_to_csv, get_v2_pool_swaps
 from uniswap_analysis import plot_liquidity_rolling_op
 from datetime import timedelta
 app = modal.App("amm-scraper")
@@ -30,7 +30,7 @@ def get_uniswap_v3_swaps(chain, fee, token_pair, from_block, to_block):
 def get_uniswap_v2_swaps(chain, fee, token_pair, from_block, to_block):
     print(f"Getting {chain} {fee} {token_pair} swaps from {from_block} to {to_block}")
     try:
-        logs = alchemy_call_batch_blocks(get_swaps, SwapEventV2, f"/root/data/swaps_{chain}_v2_{token_pair}_{fee}", int(from_block), int(to_block), chain, constants[chain][f"v2_{token_pair}_{fee}"])
+        logs = alchemy_call_batch_blocks(get_v2_pool_swaps, SwapEventV2, f"/root/data/swaps_{chain}_v2_{token_pair}_{fee}", int(from_block), int(to_block), chain, constants[chain][f"v2_{token_pair}_{fee}"])
         save_to_csv(logs, f"/root/data/swaps_{chain}_v2_{token_pair}_{fee}_{from_block}_{to_block}.csv", SwapEventV2)
         return logs
     except Exception as e:
@@ -63,6 +63,36 @@ if __name__ == "__main__":
         job_args = sys.argv[3:]
         call_id = submit_job(job_name, job_args)
         print(f"Job submitted. Call ID: {call_id}")
+    elif task == "run":
+        if len(sys.argv) < 4:
+            print("Usage: python job.py run <job_name> <arguments...>")
+            sys.exit(1)
+        job_name = sys.argv[2]
+        job_args = sys.argv[3:]
+        
+        # Map job names to their non-Modal implementations
+        job_functions = {
+            "get_uniswap_v3_swaps": lambda *args: alchemy_call_batch_blocks(
+                get_swaps, SwapEvent, f"swaps_{args[0]}_v3_{args[2]}_{args[1]}", 
+                int(args[3]), int(args[4]), args[0], constants[args[0]][f"v3_{args[2]}_{args[1]}"]),
+            "get_uniswap_v2_swaps": lambda *args: alchemy_call_batch_blocks(
+                get_v2_pool_swaps, SwapEventV2, f"swaps_{args[0]}_v2_{args[2]}_{args[1]}", 
+                int(args[3]), int(args[4]), args[0], constants[args[0]][f"v2_{args[2]}_{args[1]}"])
+        }
+        
+        if job_name not in job_functions:
+            print(f"Unknown job name: {job_name}")
+            print(f"Available jobs: {', '.join(job_functions.keys())}")
+            sys.exit(1)
+            
+        try:
+            # Run the function locally without Modal
+            result = job_functions[job_name](*job_args)
+            print(f"Job completed successfully")
+            print(f"Result: {result}")
+        except Exception as e:
+            print(f"Error running job: {e}")
+            sys.exit(1)
 
     elif task == "plot":
         if len(sys.argv) < 3:

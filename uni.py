@@ -72,17 +72,18 @@ def get_swaps(chain, address, from_block, to_block):
 
 def get_mints(address, from_block, to_block):
     contract = w3.eth.contract(address=address, abi=uniswap_v2_pool_abi)
-    logs = contract.events.Mint().get_logs(from_block=from_block, to_block=to_block)
+    logs = contract.events.Mint().get_logs(fromBlock=from_block, toBlock=to_block)
     return list(map(MintEvent.from_dict, logs))
 
 def get_burns(address, from_block, to_block):
     contract = w3.eth.contract(address=address, abi=uniswap_v2_pool_abi)
-    logs = contract.events.Burn().get_logs(from_block=from_block, to_block=to_block)
+    logs = contract.events.Burn().get_logs(fromBlock=from_block, toBlock=to_block)
     return list(map(BurnEvent.from_dict, logs))
 
-def get_v2_pool_swaps(address, from_block, to_block):
+def get_v2_pool_swaps(chain, address, from_block, to_block):
+    w3 = Web3(Web3.HTTPProvider(constants[chain]["rpc_url"]))
     contract = w3.eth.contract(address=address, abi=uniswap_v2_pool_abi)
-    logs = contract.events.Swap().get_logs(from_block=from_block, to_block=to_block)
+    logs = contract.events.Swap().get_logs(fromBlock=from_block, toBlock=to_block)
     return list(map(SwapEventV2.from_dict, logs))
 
 def get_global_fees(address, from_block, to_block):
